@@ -41,6 +41,18 @@ individual experiments belong here instead.
   selection, RX audio, the earlier microphone permission request, bottom-sheet
   behavior, and AM TX regression behavior.
 
+## 2026-09-28 — Capability-driven sample-rate selection
+
+- **App version:** `0.3.0-dev.8`
+- **Scope:** Automatic RX rate selection, capability-constrained override
+  choices, ranged-rate alignment, and readback of applied RX/TX rates.
+- **Automated result:** Successful. Unit tests cover fixed, discrete, ranged,
+  and insufficient-rate capability sets. JVM tests, debug APK assembly, and
+  Android lint completed successfully.
+- **Device result:** Not yet tested against SoapyRemote hardware.
+- **Follow-up:** Confirm that the FLEX-1500 shows automatic 48 kHz, starts RX,
+  and reports 48 kHz as the applied rate.
+
 ## Backfilled integration results
 
 These results were confirmed during development before this log was created.

@@ -28,7 +28,7 @@ class SoapyRemoteRxSession private constructor(
     private val stream: Socket,
     private val status: Socket,
     private val streamId: Int,
-    private val inputSampleRate: Double,
+    val inputSampleRate: Double,
     private val streamFormat: String,
 ) : AutoCloseable {
     private val running = AtomicBoolean(false)
@@ -232,6 +232,7 @@ class SoapyRemoteRxSession private constructor(
         private const val MAX_AUDIO_SAMPLE_RATE = 48_000
         private const val MIN_AUDIO_SAMPLE_RATE = 8_000
         private const val SET_SAMPLE_RATE = 900
+        private const val GET_SAMPLE_RATE = 901
 
         fun open(
             host: String,
@@ -270,6 +271,12 @@ class SoapyRemoteRxSession private constructor(
                 transact(
                     SoapyRpcWriter().call(SET_SAMPLE_RATE).char(RX).int32(0).float64(sampleRate),
                 ) { it.requireVoid() }
+                val appliedSampleRate = transact(
+                    SoapyRpcWriter().call(GET_SAMPLE_RATE).char(RX).int32(0),
+                ) { it.float64() }
+                require(appliedSampleRate >= MIN_AUDIO_SAMPLE_RATE) {
+                    "Radio applied an unusable sample rate: $appliedSampleRate Hz"
+                }
 
                 val setup = SoapyRpcWriter().call(SETUP_STREAM)
                     .char(RX)
@@ -303,7 +310,7 @@ class SoapyRemoteRxSession private constructor(
                 setupReply.string() // repeated server port
                 sendAck(stream!!.getOutputStream(), 0, FLOW_WINDOW_PACKETS)
                 return SoapyRemoteRxSession(
-                    control, stream!!, status!!, streamId, sampleRate, format,
+                    control, stream!!, status!!, streamId, appliedSampleRate, format,
                 )
             } catch (error: Throwable) {
                 runCatching { stream?.close() }

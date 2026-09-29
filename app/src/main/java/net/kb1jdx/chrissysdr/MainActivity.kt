@@ -35,6 +35,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -107,7 +109,7 @@ class MainActivity : ComponentActivity() {
                     onPortChanged = radio::setPort,
                     onFrequencyChanged = radio::setFrequency,
                     onBandwidthChanged = radio::setBandwidth,
-                    onSampleRateChanged = radio::setSampleRate,
+                    onSampleRateChanged = radio::selectSampleRate,
                     onDiscover = {
                         if (Build.VERSION.SDK_INT >= 37 &&
                             checkSelfPermission(LOCAL_NETWORK_PERMISSION) !=
@@ -166,7 +168,7 @@ private fun RadioScreen(
     onPortChanged: (String) -> Unit,
     onFrequencyChanged: (String) -> Unit,
     onBandwidthChanged: (String) -> Unit,
-    onSampleRateChanged: (String) -> Unit,
+    onSampleRateChanged: (Double?) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
     onStartRx: () -> Unit,
@@ -437,7 +439,7 @@ private fun SettingsSheet(
     onPortChanged: (String) -> Unit,
     onFrequencyChanged: (String) -> Unit,
     onBandwidthChanged: (String) -> Unit,
-    onSampleRateChanged: (String) -> Unit,
+    onSampleRateChanged: (Double?) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
     onStartRx: () -> Unit,
@@ -474,13 +476,10 @@ private fun SettingsSheet(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
             )
-            OutlinedTextField(
-                value = state.sampleRate,
-                onValueChange = onSampleRateChanged,
+            SampleRateSelector(
+                state = state,
+                onSelected = onSampleRateChanged,
                 modifier = Modifier.weight(1f),
-                label = { Text("Sample rate") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                singleLine = true,
             )
         }
         Spacer(Modifier.height(12.dp))
@@ -497,6 +496,13 @@ private fun SettingsSheet(
             ) { Text("Mode: ${state.mode}") }
         }
         Text(state.rxStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+        state.appliedSampleRateHz?.let {
+            Text(
+                "Radio applied ${formatHz(it)}",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Text(state.txStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
 
         HorizontalDivider(Modifier.padding(vertical = 20.dp))
@@ -557,6 +563,57 @@ private fun SettingsSheet(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 12.sp,
         )
+    }
+}
+
+@Composable
+private fun SampleRateSelector(
+    state: RadioUiState,
+    onSelected: (Double?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            enabled = state.sampleRateOptions.isNotEmpty() && !state.rxActive,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+        ) {
+            Column(Modifier.fillMaxWidth()) {
+                Text("Sample rate", fontSize = 10.sp)
+                Text(
+                    if (state.sampleRateAutomatic) {
+                        "Auto • ${state.sampleRateHz?.let(::formatHz) ?: "unavailable"}"
+                    } else {
+                        state.sampleRateHz?.let(::formatHz) ?: "unavailable"
+                    },
+                    maxLines = 1,
+                )
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        "Automatic • " +
+                            (state.automaticSampleRateHz?.let(::formatHz) ?: "unavailable"),
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    onSelected(null)
+                },
+            )
+            state.sampleRateOptions.forEach { rate ->
+                DropdownMenuItem(
+                    text = { Text(formatHz(rate)) },
+                    onClick = {
+                        expanded = false
+                        onSelected(rate)
+                    },
+                )
+            }
+        }
     }
 }
 

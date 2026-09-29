@@ -33,11 +33,11 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 - [ ] Follow the upstream Soapy APIs for [native stream format/full-scale negotiation](https://github.com/pothosware/SoapySDR/blob/master/include/SoapySDR/Device.hpp) and [SoapyRemote capability calls](https://github.com/pothosware/SoapyRemote/blob/master/common/SoapyRemoteDefs.hpp).
 - [ ] Support `CS8`, `CS16`, and `CF32` decoding with format-specific byte order and full-scale conversion.
 - [ ] Prefer a supported native format when efficient; otherwise prefer `CS16`, then `CF32`, then `CS8`.
-- [ ] Replace free-form sample-rate entry:
-  - [ ] Automatically select the lowest advertised rate sufficient for the active mode and filter.
-  - [ ] Query the actual applied rate after configuration.
-  - [ ] Offer only capability-valid rates in an advanced override.
-  - [ ] For ranged capabilities, generate choices within the reported minimum, maximum, and step.
+- [x] Replace free-form sample-rate entry:
+  - [x] Automatically select the lowest advertised rate sufficient for the active mode and filter.
+  - [x] Query the actual applied rate after configuration.
+  - [x] Offer only capability-valid rates in an advanced override.
+  - [x] For ranged capabilities, generate choices within the reported minimum, maximum, and step.
 - [ ] Select hardware bandwidth automatically as the smallest supported value that contains the requested DSP passband.
 - [ ] Add structured errors, connection state, clean cancellation, reconnection, stream-status handling, and guaranteed device cleanup.
 

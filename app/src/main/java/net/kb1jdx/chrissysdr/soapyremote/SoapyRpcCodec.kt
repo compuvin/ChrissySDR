@@ -117,7 +117,7 @@ class SoapyRpcReader(payload: ByteArray) {
         return SoapyRange(float64(), float64(), float64())
     }
 
-    private fun float64(): Double {
+    fun float64(): Double {
         expect(RpcType.FLOAT64)
         val exponent = int32()
         expect(RpcType.INT64)

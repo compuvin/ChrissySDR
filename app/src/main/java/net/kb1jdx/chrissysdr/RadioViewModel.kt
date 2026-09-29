@@ -23,7 +23,11 @@ data class RadioUiState(
     val port: String = SoapyRemoteClient.DEFAULT_PORT.toString(),
     val frequency: String = "10000000",
     val bandwidth: String = "12000",
-    val sampleRate: String = "48000",
+    val sampleRateHz: Double? = null,
+    val automaticSampleRateHz: Double? = null,
+    val sampleRateOptions: List<Double> = emptyList(),
+    val sampleRateAutomatic: Boolean = true,
+    val appliedSampleRateHz: Double? = null,
     val mode: String = "AM",
     val connectionStatus: String = "Not connected",
     val deviceDetails: String = "",
@@ -49,6 +53,7 @@ class RadioViewModel : ViewModel() {
     private var selectedPort = SoapyRemoteClient.DEFAULT_PORT
     private var selectedDevice: Map<String, String>? = null
     private var selectedRxFormat: String? = null
+    private var selectedRxCapabilities: SoapyChannelCapabilities? = null
     private var selectedTxFormat: String? = null
     private var selectedTxSampleRate: Double? = null
     private var selectedTxCapabilities: SoapyChannelCapabilities? = null
@@ -58,8 +63,23 @@ class RadioViewModel : ViewModel() {
     fun setHost(value: String) = mutableState.update { it.copy(host = value) }
     fun setPort(value: String) = mutableState.update { it.copy(port = value) }
     fun setFrequency(value: String) = mutableState.update { it.copy(frequency = value) }
-    fun setBandwidth(value: String) = mutableState.update { it.copy(bandwidth = value) }
-    fun setSampleRate(value: String) = mutableState.update { it.copy(sampleRate = value) }
+    fun setBandwidth(value: String) {
+        mutableState.update { it.copy(bandwidth = value) }
+        if (mutableState.value.sampleRateAutomatic) updateAutomaticSampleRate()
+    }
+
+    fun selectSampleRate(value: Double?) {
+        if (value != null && value !in mutableState.value.sampleRateOptions) return
+        mutableState.update {
+            it.copy(
+                sampleRateAutomatic = value == null,
+                sampleRateHz = value ?: it.sampleRateHz,
+                rxAvailable = selectedRxFormat != null && (value ?: it.automaticSampleRateHz) != null,
+                appliedSampleRateHz = null,
+            )
+        }
+        if (value == null) updateAutomaticSampleRate()
+    }
 
     fun discover() {
         val snapshot = mutableState.value
@@ -136,15 +156,22 @@ class RadioViewModel : ViewModel() {
         selectedPort = port
         selectedDevice = choice.arguments
         val rxCapabilities = info.rxCapabilities
+        selectedRxCapabilities = rxCapabilities
         selectedRxFormat = rxCapabilities.supportedFormat()
-        val rxRate = rxCapabilities?.preferredSampleRate()
+        val bandwidth = mutableState.value.bandwidth.toDoubleOrNull() ?: DEFAULT_AM_BANDWIDTH
+        val rxRates = rxCapabilities?.let {
+            SampleRatePolicy.choose(it.sampleRates, it.sampleRateRanges, bandwidth)
+        } ?: SampleRateChoice(null, emptyList())
+        val rxRate = rxRates.automaticRate
 
         val stationOwner = info.hardwareInfo["station_owner"]?.toBooleanStrictOrNull() ?: true
         val transmitEnabled = info.hardwareInfo["daemon_transmit_enabled"]
             ?.toBooleanStrictOrNull() ?: true
         val txCapabilities = info.txCapabilities
         selectedTxFormat = txCapabilities.supportedFormat()
-        selectedTxSampleRate = txCapabilities?.preferredSampleRate()
+        selectedTxSampleRate = txCapabilities?.let {
+            SampleRatePolicy.choose(it.sampleRates, it.sampleRateRanges, bandwidth).automaticRate
+        }
         selectedTxCapabilities = if (
             stationOwner && transmitEnabled && selectedTxFormat != null &&
             selectedTxSampleRate != null && txCapabilities?.frequencyRanges?.isNotEmpty() == true
@@ -165,7 +192,11 @@ class RadioViewModel : ViewModel() {
                 inspecting = false,
                 connectionStatus = "Selected ${choice.label}",
                 deviceDetails = formatDeviceInfo(info),
-                sampleRate = rxRate?.toPlainRate() ?: it.sampleRate,
+                sampleRateHz = rxRate,
+                automaticSampleRateHz = rxRate,
+                sampleRateOptions = rxRates.overrideOptions,
+                sampleRateAutomatic = true,
+                appliedSampleRateHz = null,
                 rxAvailable = selectedRxFormat != null && rxRate != null,
                 rxStatus = if (selectedRxFormat != null && rxRate != null) {
                     "AM RX ready (${selectedRxFormat}, ${formatHz(rxRate)})"
@@ -178,13 +209,36 @@ class RadioViewModel : ViewModel() {
         }
     }
 
+    private fun updateAutomaticSampleRate() {
+        val capabilities = selectedRxCapabilities ?: return
+        val bandwidth = mutableState.value.bandwidth.toDoubleOrNull() ?: return
+        val choice = SampleRatePolicy.choose(
+            capabilities.sampleRates,
+            capabilities.sampleRateRanges,
+            bandwidth,
+        )
+        mutableState.update {
+            it.copy(
+                sampleRateHz = choice.automaticRate,
+                automaticSampleRateHz = choice.automaticRate,
+                sampleRateOptions = choice.overrideOptions,
+                rxAvailable = selectedRxFormat != null && choice.automaticRate != null,
+                rxStatus = if (choice.automaticRate == null) {
+                    "No reported sample rate can support this RX bandwidth"
+                } else if (!it.rxActive) {
+                    "AM RX ready (${selectedRxFormat}, ${formatHz(choice.automaticRate)})"
+                } else it.rxStatus,
+            )
+        }
+    }
+
     fun startReceiver() {
         val snapshot = mutableState.value
         val device = selectedDevice
         val format = selectedRxFormat
         val frequency = snapshot.frequency.toDoubleOrNull()
         val bandwidth = snapshot.bandwidth.toDoubleOrNull()
-        val sampleRate = snapshot.sampleRate.toDoubleOrNull()
+        val sampleRate = snapshot.sampleRateHz
         if (device == null || format == null || frequency == null || bandwidth == null ||
             sampleRate == null
         ) {
@@ -222,13 +276,19 @@ class RadioViewModel : ViewModel() {
                         },
                     )
                     rxSession = session
+                    session
                 } catch (error: Throwable) {
                     session.close()
                     throw error
                 }
-            }.onSuccess {
+            }.onSuccess { session ->
                 mutableState.update {
-                    it.copy(rxActive = true, rxBusy = false, rxStatus = "AM audio active")
+                    it.copy(
+                        rxActive = true,
+                        rxBusy = false,
+                        appliedSampleRateHz = session.inputSampleRate,
+                        rxStatus = "AM audio active • applied ${formatHz(session.inputSampleRate)}",
+                    )
                 }
             }.onFailure { error ->
                 rxSession = null
@@ -308,11 +368,12 @@ class RadioViewModel : ViewModel() {
                         },
                     )
                     txSession = session
+                    session
                 } catch (error: Throwable) {
                     session.close()
                     throw error
                 }
-            }.onSuccess {
+            }.onSuccess { session ->
                 mutableState.update {
                     it.copy(
                         rxActive = false,
@@ -320,7 +381,8 @@ class RadioViewModel : ViewModel() {
                         rxStatus = "RX stopped for transmit",
                         txActive = true,
                         txBusy = false,
-                        txStatus = "TRANSMITTING AM; microphone active",
+                        txStatus = "TRANSMITTING AM; microphone active • " +
+                            "applied ${formatHz(session.outputSampleRate)}",
                     )
                 }
             }.onFailure { error ->
@@ -370,16 +432,6 @@ private fun SoapyChannelCapabilities?.supportedFormat(): String? = when {
     else -> null
 }
 
-private fun SoapyChannelCapabilities.preferredSampleRate(): Double? {
-    val discrete = sampleRates.filter { it >= MIN_RADIO_SAMPLE_RATE }.minOrNull()
-    if (discrete != null) return discrete
-    return sampleRateRanges
-        .mapNotNull { range ->
-            maxOf(range.minimum, MIN_RADIO_SAMPLE_RATE).takeIf { it <= range.maximum }
-        }
-        .minOrNull()
-}
-
 private fun formatDeviceInfo(info: SoapyRemoteDeviceInfo) = buildString {
     append("Driver: ${info.driverKey}")
     append("\nHardware: ${info.hardwareKey}")
@@ -421,7 +473,4 @@ internal fun formatHz(value: Double): String = when {
     else -> "%.6g Hz".format(value)
 }
 
-private fun Double.toPlainRate(): String =
-    if (this % 1.0 == 0.0) toLong().toString() else toString()
-
-private const val MIN_RADIO_SAMPLE_RATE = 8_000.0
+private const val DEFAULT_AM_BANDWIDTH = 12_000.0
