@@ -72,6 +72,9 @@ its purchase will help support continued development and maintenance. Paying
 for the Play Store version will not unlock a separate set of application
 features.
 
+If you would like to support development directly, you can
+[buy the author a coffee](https://buymeacoffee.com/compuvin).
+
 ## Building
 
 Requirements:
@@ -111,6 +114,5 @@ before any over-the-air use.
 
 ## License
 
-An open-source license will be selected and added before the first public
-release. Until that license file is present, the repository contents should not
-be assumed to grant redistribution rights.
+ChrissySDR is free software licensed under the
+[GNU General Public License version 3](LICENSE).
