@@ -6,7 +6,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 
 internal enum class RpcType(val id: Int) {
-    CHAR(0), INT32(2), INT64(3), FLOAT64(4), STRING(6), RANGE(7), RANGE_LIST(8),
+    CHAR(0), BOOL(1), INT32(2), INT64(3), FLOAT64(4), STRING(6), RANGE(7), RANGE_LIST(8),
     STRING_LIST(9), FLOAT64_LIST(10), KWARGS(11), KWARGS_LIST(12), EXCEPTION(13), VOID(14), CALL(15)
 }
 
@@ -18,6 +18,7 @@ class SoapyRpcWriter {
 
     fun call(id: Int) = apply { type(RpcType.CALL); int32(id) }
     fun char(value: Int) = apply { type(RpcType.CHAR); output.writeByte(value) }
+    fun bool(value: Boolean) = apply { type(RpcType.BOOL); output.writeBoolean(value) }
     fun int32(value: Int) = apply { type(RpcType.INT32); output.writeInt(value) }
     fun int64(value: Long) = apply { type(RpcType.INT64); output.writeLong(value) }
 
@@ -67,6 +68,7 @@ class SoapyRpcReader(payload: ByteArray) {
 
     fun call(): Int { expect(RpcType.CALL); return int32() }
     fun char(): Int { expect(RpcType.CHAR); return input.readUnsignedByte() }
+    fun bool(): Boolean { expect(RpcType.BOOL); return input.readBoolean() }
 
     fun string(): String {
         expect(RpcType.STRING)
@@ -112,7 +114,7 @@ class SoapyRpcReader(payload: ByteArray) {
         return List(count) { range() }
     }
 
-    private fun range(): SoapyRange {
+    fun range(): SoapyRange {
         expect(RpcType.RANGE)
         return SoapyRange(float64(), float64(), float64())
     }

@@ -19,11 +19,15 @@ data class SoapyChannelCapabilities(
     val formats: List<String>,
     val antennas: List<String>,
     val gains: List<String>,
+    val gainRanges: Map<String, SoapyRange>,
+    val automaticGain: Boolean?,
+    val fullDuplex: Boolean?,
     val frequencyRanges: List<SoapyRange>,
     val sampleRates: List<Double>,
     val sampleRateRanges: List<SoapyRange>,
     val bandwidths: List<Double>,
     val bandwidthRanges: List<SoapyRange>,
+    val notReported: Set<String>,
 )
 
 class SoapyRemoteClient(
@@ -82,15 +86,51 @@ class SoapyRemoteClient(
 
     private fun getCapabilities(socket: Socket, direction: Int): SoapyChannelCapabilities {
         fun request(call: Int) = SoapyRpcWriter().call(call).char(direction).int32(0)
+        val notReported = linkedSetOf<String>()
+        fun <T> optional(label: String, fallback: T, query: () -> T): T = try {
+            query()
+        } catch (error: SoapyRemoteException) {
+            if (!error.isUnsupportedCapability()) throw error
+            notReported += label
+            fallback
+        }
+        val gains = optional("gain controls", emptyList()) {
+            transact(socket, request(LIST_GAINS)) { it.stringList() }
+        }
+        val gainRanges = gains.mapNotNull { name ->
+            optional("gain range: $name", null) {
+                transact(socket, request(GET_GAIN_ELEMENT_RANGE).string(name)) { it.range() }
+            }?.let { name to it }
+        }.toMap()
         return SoapyChannelCapabilities(
             formats = transact(socket, request(GET_STREAM_FORMATS)) { it.stringList() },
-            antennas = transact(socket, request(LIST_ANTENNAS)) { it.stringList() },
-            gains = transact(socket, request(LIST_GAINS)) { it.stringList() },
-            frequencyRanges = transact(socket, request(GET_FREQUENCY_RANGE)) { it.rangeList() },
-            sampleRates = transact(socket, request(LIST_SAMPLE_RATES)) { it.float64List() },
-            sampleRateRanges = transact(socket, request(GET_SAMPLE_RATE_RANGE)) { it.rangeList() },
-            bandwidths = transact(socket, request(LIST_BANDWIDTHS)) { it.float64List() },
-            bandwidthRanges = transact(socket, request(GET_BANDWIDTH_RANGE)) { it.rangeList() },
+            antennas = optional("antennas", emptyList()) {
+                transact(socket, request(LIST_ANTENNAS)) { it.stringList() }
+            },
+            gains = gains,
+            gainRanges = gainRanges,
+            automaticGain = optional("automatic gain", null) {
+                transact(socket, request(HAS_GAIN_MODE)) { it.bool() }
+            },
+            fullDuplex = optional("duplex capability", null) {
+                transact(socket, request(GET_FULL_DUPLEX)) { it.bool() }
+            },
+            frequencyRanges = optional("frequency ranges", emptyList()) {
+                transact(socket, request(GET_FREQUENCY_RANGE)) { it.rangeList() }
+            },
+            sampleRates = optional("discrete sample rates", emptyList()) {
+                transact(socket, request(LIST_SAMPLE_RATES)) { it.float64List() }
+            },
+            sampleRateRanges = optional("sample-rate ranges", emptyList()) {
+                transact(socket, request(GET_SAMPLE_RATE_RANGE)) { it.rangeList() }
+            },
+            bandwidths = optional("discrete bandwidths", emptyList()) {
+                transact(socket, request(LIST_BANDWIDTHS)) { it.float64List() }
+            },
+            bandwidthRanges = optional("bandwidth ranges", emptyList()) {
+                transact(socket, request(GET_BANDWIDTH_RANGE)) { it.rangeList() }
+            },
+            notReported = notReported,
         )
     }
 
@@ -110,9 +150,12 @@ class SoapyRemoteClient(
         private const val GET_HARDWARE_KEY = 101
         private const val GET_HARDWARE_INFO = 102
         private const val GET_NUM_CHANNELS = 202
+        private const val GET_FULL_DUPLEX = 203
         private const val GET_STREAM_FORMATS = 304
         private const val LIST_ANTENNAS = 500
         private const val LIST_GAINS = 700
+        private const val GET_GAIN_ELEMENT_RANGE = 708
+        private const val HAS_GAIN_MODE = 709
         private const val GET_FREQUENCY_RANGE = 805
         private const val LIST_SAMPLE_RATES = 902
         private const val LIST_BANDWIDTHS = 905
@@ -122,4 +165,9 @@ class SoapyRemoteClient(
         private const val RX = 1
         private const val STOP_KEY = "soapy_remote_no_deeper"
     }
+}
+
+internal fun SoapyRemoteException.isUnsupportedCapability(): Boolean {
+    val text = message.orEmpty().lowercase()
+    return "not supported" in text || "unsupported" in text || "not implemented" in text
 }

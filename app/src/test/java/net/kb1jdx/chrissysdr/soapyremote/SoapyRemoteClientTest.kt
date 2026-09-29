@@ -1,11 +1,21 @@
 package com.kb1jdx.chrissysdr.soapyremote
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.ServerSocket
 import java.util.concurrent.Executors
 
 class SoapyRemoteClientTest {
+    @Test
+    fun distinguishesUnsupportedCapabilitiesFromDeviceErrors() {
+        assertTrue(SoapyRemoteException("getFullDuplex not supported").isUnsupportedCapability())
+        assertTrue(SoapyRemoteException("unsupported operation").isUnsupportedCapability())
+        assertFalse(SoapyRemoteException("device disconnected").isUnsupportedCapability())
+        assertFalse(SoapyRemoteException("I/O failure").isUnsupportedCapability())
+    }
+
     @Test
     fun opensQueriesAndClosesDevice() {
         ServerSocket(0).use { server ->
@@ -17,7 +27,7 @@ class SoapyRemoteClientTest {
                         socket.getOutputStream().write(writer.frame().encode())
                         socket.getOutputStream().flush()
                     }
-                    repeat(25) {
+                    repeat(29) {
                         val reader = SoapyRpcReader(SoapyRpcFrame.readFrom(socket.getInputStream()).payload)
                         val call = reader.call()
                         calls += call
@@ -43,6 +53,10 @@ class SoapyRemoteClientTest {
                                 reader.char(); reader.int32()
                                 reply(SoapyRpcWriter().emptyFloat64List())
                             }
+                            203, 709 -> {
+                                reader.char(); reader.int32()
+                                reply(SoapyRpcWriter().bool(false))
+                            }
                             2, 3 -> reply(SoapyRpcWriter().voidValue())
                             else -> error("Unexpected call $call")
                         }
@@ -65,8 +79,8 @@ class SoapyRemoteClientTest {
             assertEquals(1, info.txChannels)
             assertEquals(
                 listOf(20, 1, 100, 101, 102, 202, 202) +
-                    listOf(304, 500, 700, 805, 902, 907, 905, 906) +
-                    listOf(304, 500, 700, 805, 902, 907, 905, 906) +
+                    listOf(700, 304, 500, 709, 203, 805, 902, 907, 905, 906) +
+                    listOf(700, 304, 500, 709, 203, 805, 902, 907, 905, 906) +
                     listOf(2, 3),
                 calls,
             )

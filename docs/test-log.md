@@ -12,6 +12,20 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-09-28 — Capability discovery RX regression
+
+- **App version:** `0.3.0-dev.11`
+- **Radio:** FLEX-1500 via flex1500d
+- **Transport:** SoapyRemote over LAN
+- **Scope:** Regression test after adding optional-capability handling, gain
+  ranges, AGC and duplex queries, and the per-radio unknown-TX-range override.
+- **Result:** Receive tested successfully; audio was reported as clear and crisp.
+- **Expected UI behavior:** No unknown-range transmit override was shown because
+  this radio reports explicit TX frequency ranges. No other conspicuous UI
+  changes were observed.
+- **Not tested:** A radio with missing TX frequency ranges, persistence of that
+  radio's override acknowledgment, transmit, and TX-to-RX restoration.
+
 ## 2026-09-28 — Experimental AM transmit
 
 - **App version:** `0.3.0-dev.6`

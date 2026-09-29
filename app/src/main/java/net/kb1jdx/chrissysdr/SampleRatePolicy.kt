@@ -1,6 +1,6 @@
 package com.kb1jdx.chrissysdr
 
-import com.kb1jdx.chrissysdr.soapyremote.SoapyRange
+import com.kb1jdx.chrissysdr.radio.RadioRange
 import kotlin.math.ceil
 import kotlin.math.floor
 
@@ -18,7 +18,7 @@ object SampleRatePolicy {
 
     fun choose(
         discreteRates: List<Double>,
-        ranges: List<SoapyRange>,
+        ranges: List<RadioRange>,
         bandwidthHz: Double,
     ): SampleRateChoice {
         val requiredRate = maxOf(MINIMUM_RATE, bandwidthHz * BANDWIDTH_MARGIN)
@@ -45,7 +45,7 @@ object SampleRatePolicy {
         return SampleRateChoice(automaticRate = automatic, overrideOptions = options)
     }
 
-    private fun alignToRange(candidate: Double, range: SoapyRange): Double? {
+    private fun alignToRange(candidate: Double, range: RadioRange): Double? {
         if (candidate > range.maximum) return null
         if (range.step <= 0.0) return candidate.coerceAtLeast(range.minimum)
         val steps = ceil((candidate - range.minimum).coerceAtLeast(0.0) / range.step)
@@ -53,7 +53,7 @@ object SampleRatePolicy {
         return aligned.takeIf { it <= range.maximum + EPSILON }
     }
 
-    private fun alignDownToRange(candidate: Double, range: SoapyRange): Double? {
+    private fun alignDownToRange(candidate: Double, range: RadioRange): Double? {
         if (range.step <= 0.0) return candidate.coerceIn(range.minimum, range.maximum)
         val steps = floor(((candidate - range.minimum) / range.step).coerceAtLeast(0.0))
         val aligned = range.minimum + steps * range.step

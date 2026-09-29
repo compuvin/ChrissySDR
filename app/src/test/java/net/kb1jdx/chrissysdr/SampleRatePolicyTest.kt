@@ -1,6 +1,6 @@
 package com.kb1jdx.chrissysdr
 
-import com.kb1jdx.chrissysdr.soapyremote.SoapyRange
+import com.kb1jdx.chrissysdr.radio.RadioRange
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -11,7 +11,7 @@ class SampleRatePolicyTest {
     fun fixedFlexRateIsSelectedAutomatically() {
         val choice = SampleRatePolicy.choose(
             discreteRates = listOf(48_000.0),
-            ranges = listOf(SoapyRange(48_000.0, 48_000.0, 0.0)),
+            ranges = listOf(RadioRange(48_000.0, 48_000.0, 0.0)),
             bandwidthHz = 12_000.0,
         )
         assertEquals(48_000.0, choice.automaticRate)
@@ -33,7 +33,7 @@ class SampleRatePolicyTest {
     fun steppedRangeProducesOnlyAlignedOptions() {
         val choice = SampleRatePolicy.choose(
             discreteRates = emptyList(),
-            ranges = listOf(SoapyRange(100_000.0, 1_000_000.0, 50_000.0)),
+            ranges = listOf(RadioRange(100_000.0, 1_000_000.0, 50_000.0)),
             bandwidthHz = 180_000.0,
         )
         assertEquals(250_000.0, choice.automaticRate)

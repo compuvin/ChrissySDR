@@ -19,7 +19,7 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 ### 0.4 — Soapy and Architecture Foundation
 
 - [ ] Split the current activity into:
-  - [ ] A capability-driven `RadioBackend` interface.
+  - [x] A capability-driven `RadioBackend` interface.
   - [ ] A SoapyRemote control and streaming implementation.
   - [ ] Independent DSP/audio pipelines.
   - [ ] A foreground radio service that owns connections and streams.
@@ -29,7 +29,7 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
   - [ ] Available stream formats and stream arguments.
   - [ ] Discrete sample rates and ranges.
   - [ ] Frequency and bandwidth ranges.
-  - [ ] Antennas, gain elements/ranges, automatic gain support, and duplex capability.
+  - [x] Antennas, gain elements/ranges, automatic gain support, and duplex capability.
   - [ ] Driver-defined settings, including their types, ranges/options, and current values.
   - [ ] Device and per-channel sensors, including available SWR and forward-power telemetry.
 - [ ] Follow the upstream Soapy APIs for [native stream format/full-scale negotiation](https://github.com/pothosware/SoapySDR/blob/master/include/SoapySDR/Device.hpp) and [SoapyRemote capability calls](https://github.com/pothosware/SoapyRemote/blob/master/common/SoapyRemoteDefs.hpp).
@@ -85,7 +85,7 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 
 - [ ] Implement SoapyRemote TX streaming for microphone-originated AM, NFM, USB, and LSB.
 - [ ] Configure TX format, sample rate, frequency, bandwidth, antenna, and gain exclusively from advertised TX capabilities.
-- [ ] Validate the requested frequency against the device’s TX ranges before arming.
+- [x] Validate the requested frequency against the device’s TX ranges before arming.
 - [ ] Use tap-to-latch PTT with:
   - [ ] A separate explicit TX-armed state.
   - [ ] Strong visual and audible transitions into and out of transmit.

@@ -1,12 +1,17 @@
 package com.kb1jdx.chrissysdr
 
-import androidx.lifecycle.ViewModel
-import com.kb1jdx.chrissysdr.soapyremote.SoapyChannelCapabilities
-import com.kb1jdx.chrissysdr.soapyremote.SoapyRange
-import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteClient
-import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteDeviceInfo
-import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteRxSession
-import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteTxSession
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import com.kb1jdx.chrissysdr.radio.RadioBackend
+import com.kb1jdx.chrissysdr.radio.RadioChannelCapabilities
+import com.kb1jdx.chrissysdr.radio.RadioDeviceCapabilities
+import com.kb1jdx.chrissysdr.radio.RadioEndpoint
+import com.kb1jdx.chrissysdr.radio.RadioRange
+import com.kb1jdx.chrissysdr.radio.RadioReceiver
+import com.kb1jdx.chrissysdr.radio.RadioTransmitter
+import com.kb1jdx.chrissysdr.radio.ReceiverConfig
+import com.kb1jdx.chrissysdr.radio.SoapyRemoteBackend
+import com.kb1jdx.chrissysdr.radio.TransmitterConfig
 import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,7 +25,7 @@ data class RadioDeviceChoice(
 
 data class RadioUiState(
     val host: String = "192.168.1.100",
-    val port: String = SoapyRemoteClient.DEFAULT_PORT.toString(),
+    val port: String = RadioEndpoint.DEFAULT_PORT.toString(),
     val frequency: String = "10000000",
     val bandwidth: String = "12000",
     val sampleRateHz: Double? = null,
@@ -42,23 +47,27 @@ data class RadioUiState(
     val txActive: Boolean = false,
     val txBusy: Boolean = false,
     val txStatus: String = "AM TX unavailable",
+    val txRangesUnreported: Boolean = false,
+    val allowUnknownTxRange: Boolean = false,
 )
 
-class RadioViewModel : ViewModel() {
-    private val client = SoapyRemoteClient()
+class RadioViewModel(application: Application) : AndroidViewModel(application) {
+    private val backend: RadioBackend = SoapyRemoteBackend()
+    private val preferences = application.getSharedPreferences("radio_safety", 0)
     private val worker = Executors.newCachedThreadPool()
     private val mutableState = MutableStateFlow(RadioUiState())
     val state: StateFlow<RadioUiState> = mutableState.asStateFlow()
 
-    private var selectedPort = SoapyRemoteClient.DEFAULT_PORT
+    private var selectedPort = RadioEndpoint.DEFAULT_PORT
     private var selectedDevice: Map<String, String>? = null
     private var selectedRxFormat: String? = null
-    private var selectedRxCapabilities: SoapyChannelCapabilities? = null
+    private var selectedRxCapabilities: RadioChannelCapabilities? = null
     private var selectedTxFormat: String? = null
     private var selectedTxSampleRate: Double? = null
-    private var selectedTxCapabilities: SoapyChannelCapabilities? = null
-    @Volatile private var rxSession: SoapyRemoteRxSession? = null
-    @Volatile private var txSession: SoapyRemoteTxSession? = null
+    private var selectedTxCapabilities: RadioChannelCapabilities? = null
+    private var selectedRadioPreferenceKey: String? = null
+    @Volatile private var rxSession: RadioReceiver? = null
+    @Volatile private var txSession: RadioTransmitter? = null
     @Volatile private var resumeRxAfterTx = false
 
     fun setHost(value: String) = mutableState.update { it.copy(host = value) }
@@ -98,18 +107,17 @@ class RadioViewModel : ViewModel() {
             )
         }
         worker.execute {
-            runCatching { client.discover(snapshot.host, port) }
+            runCatching { backend.discover(RadioEndpoint(snapshot.host, port)) }
                 .onSuccess { discovery ->
                     mutableState.update {
                         it.copy(
                             discovering = false,
                             connectionStatus =
                                 "Connected to ${discovery.serverId}; ${discovery.devices.size} device(s)",
-                            devices = discovery.devices.mapIndexed { index, arguments ->
+                            devices = discovery.devices.map { device ->
                                 RadioDeviceChoice(
-                                    label = arguments["label"] ?: arguments["driver"]
-                                        ?: "Device ${index + 1}",
-                                    arguments = arguments,
+                                    label = device.label,
+                                    arguments = device.arguments,
                                 )
                             },
                         )
@@ -134,7 +142,9 @@ class RadioViewModel : ViewModel() {
             it.copy(inspecting = true, connectionStatus = "Opening ${choice.label}…")
         }
         worker.execute {
-            runCatching { client.inspect(snapshot.host, port, choice.arguments) }
+            runCatching {
+                backend.inspect(RadioEndpoint(snapshot.host, port), choice.arguments)
+            }
                 .onSuccess { info -> configureDevice(snapshot.host, port, choice, info) }
                 .onFailure { error ->
                     mutableState.update {
@@ -152,11 +162,13 @@ class RadioViewModel : ViewModel() {
         host: String,
         port: Int,
         choice: RadioDeviceChoice,
-        info: SoapyRemoteDeviceInfo,
+        info: RadioDeviceCapabilities,
     ) {
         selectedPort = port
         selectedDevice = choice.arguments
-        val rxCapabilities = info.rxCapabilities
+        val radioPreferenceKey = unknownRangePreferenceKey(host, port, choice.arguments)
+        selectedRadioPreferenceKey = radioPreferenceKey
+        val rxCapabilities = info.rx
         selectedRxCapabilities = rxCapabilities
         selectedRxFormat = rxCapabilities.supportedFormat()
         val bandwidth = mutableState.value.bandwidth.toDoubleOrNull() ?: DEFAULT_AM_BANDWIDTH
@@ -165,18 +177,25 @@ class RadioViewModel : ViewModel() {
         } ?: SampleRateChoice(null, emptyList())
         val rxRate = rxRates.automaticRate
 
-        val stationOwner = info.hardwareInfo["station_owner"]?.toBooleanStrictOrNull() ?: true
-        val transmitEnabled = info.hardwareInfo["daemon_transmit_enabled"]
+        val stationOwner = info.metadata["station_owner"]?.toBooleanStrictOrNull() ?: true
+        val transmitEnabled = info.metadata["daemon_transmit_enabled"]
             ?.toBooleanStrictOrNull() ?: true
-        val txCapabilities = info.txCapabilities
+        val txCapabilities = info.tx
         selectedTxFormat = txCapabilities.supportedFormat()
         selectedTxSampleRate = txCapabilities?.let {
             SampleRatePolicy.choose(it.sampleRates, it.sampleRateRanges, bandwidth).automaticRate
         }
+        val txRangesUnreported = txCapabilities?.frequencyRanges?.isEmpty() == true
+        val allowUnknownTxRange = txRangesUnreported && preferences.getBoolean(
+            radioPreferenceKey,
+            false,
+        )
         selectedTxCapabilities = if (
             stationOwner && transmitEnabled && selectedTxFormat != null &&
-            selectedTxSampleRate != null && txCapabilities?.frequencyRanges?.isNotEmpty() == true
+            selectedTxSampleRate != null && txCapabilities != null
         ) txCapabilities else null
+        val txAvailable = selectedTxCapabilities != null &&
+            (!txRangesUnreported || allowUnknownTxRange)
 
         val txMessage = when {
             !stationOwner -> "AM TX unavailable: this client is not the station owner"
@@ -184,7 +203,8 @@ class RadioViewModel : ViewModel() {
             txCapabilities == null -> "AM TX unavailable: no TX channel"
             selectedTxFormat == null -> "AM TX unavailable: no CS16 or CF32 stream"
             selectedTxSampleRate == null -> "AM TX unavailable: no usable TX sample rate"
-            txCapabilities.frequencyRanges.isEmpty() -> "AM TX unavailable: no TX frequency ranges"
+            txRangesUnreported && !allowUnknownTxRange ->
+                "AM TX disabled: the radio did not report TX frequency limits"
             else -> "AM TX ready (${selectedTxFormat}, ${formatHz(selectedTxSampleRate!!)})"
         }
         mutableState.update {
@@ -204,8 +224,28 @@ class RadioViewModel : ViewModel() {
                 } else {
                     "AM RX unavailable for the reported capabilities"
                 },
-                txAvailable = selectedTxCapabilities != null,
+                txAvailable = txAvailable,
                 txStatus = txMessage,
+                txRangesUnreported = txRangesUnreported,
+                allowUnknownTxRange = allowUnknownTxRange,
+            )
+        }
+    }
+
+    fun setAllowUnknownTxRange(enabled: Boolean) {
+        val key = selectedRadioPreferenceKey ?: return
+        val capabilities = selectedTxCapabilities ?: return
+        if (capabilities.frequencyRanges.isNotEmpty()) return
+        preferences.edit().putBoolean(key, enabled).apply()
+        mutableState.update {
+            it.copy(
+                allowUnknownTxRange = enabled,
+                txAvailable = enabled,
+                txStatus = if (enabled) {
+                    "AM TX ready with unknown hardware frequency limits; operator validation required"
+                } else {
+                    "AM TX disabled: the radio did not report TX frequency limits"
+                },
             )
         }
     }
@@ -249,8 +289,15 @@ class RadioViewModel : ViewModel() {
         mutableState.update { it.copy(rxBusy = true, rxStatus = "Opening RX stream…") }
         worker.execute {
             runCatching {
-                val session = SoapyRemoteRxSession.open(
-                    snapshot.host, selectedPort, device, frequency, bandwidth, sampleRate, format,
+                val session = backend.openReceiver(
+                    ReceiverConfig(
+                        endpoint = RadioEndpoint(snapshot.host, selectedPort),
+                        deviceArguments = device,
+                        frequencyHz = frequency,
+                        bandwidthHz = bandwidth,
+                        sampleRate = sampleRate,
+                        format = format,
+                    ),
                 )
                 try {
                     session.start(
@@ -287,8 +334,8 @@ class RadioViewModel : ViewModel() {
                     it.copy(
                         rxActive = true,
                         rxBusy = false,
-                        appliedSampleRateHz = session.inputSampleRate,
-                        rxStatus = "AM audio active • applied ${formatHz(session.inputSampleRate)}",
+                        appliedSampleRateHz = session.appliedSampleRate,
+                        rxStatus = "AM audio active • applied ${formatHz(session.appliedSampleRate)}",
                     )
                 }
             }.onFailure { error ->
@@ -325,7 +372,12 @@ class RadioViewModel : ViewModel() {
             ?: return "Enter a valid transmit frequency"
         val capabilities = selectedTxCapabilities
             ?: return "The selected radio is not available for transmit"
-        if (capabilities.frequencyRanges.none { frequency in it.minimum..it.maximum }) {
+        if (capabilities.frequencyRanges.isEmpty() && !mutableState.value.allowUnknownTxRange) {
+            return "TX is disabled because the radio did not report frequency limits"
+        }
+        if (capabilities.frequencyRanges.isNotEmpty() &&
+            capabilities.frequencyRanges.none { frequency in it.minimum..it.maximum }
+        ) {
             return "TX frequency is outside the ranges reported by the radio"
         }
         return null
@@ -349,8 +401,14 @@ class RadioViewModel : ViewModel() {
                 val receive = rxSession
                 rxSession = null
                 receive?.close()
-                val session = SoapyRemoteTxSession.open(
-                    snapshot.host, selectedPort, device, frequency, sampleRate, format,
+                val session = backend.openTransmitter(
+                    TransmitterConfig(
+                        endpoint = RadioEndpoint(snapshot.host, selectedPort),
+                        deviceArguments = device,
+                        frequencyHz = frequency,
+                        sampleRate = sampleRate,
+                        format = format,
+                    ),
                 )
                 try {
                     session.start(
@@ -384,7 +442,7 @@ class RadioViewModel : ViewModel() {
                         txActive = true,
                         txBusy = false,
                         txStatus = "TRANSMITTING AM; microphone active • " +
-                            "applied ${formatHz(session.outputSampleRate)}",
+                            "applied ${formatHz(session.appliedSampleRate)}",
                     )
                 }
             }.onFailure { error ->
@@ -434,30 +492,35 @@ class RadioViewModel : ViewModel() {
     }
 }
 
-private fun SoapyChannelCapabilities?.supportedFormat(): String? = when {
+private fun RadioChannelCapabilities?.supportedFormat(): String? = when {
     this == null -> null
     "CS16" in formats -> "CS16"
     "CF32" in formats -> "CF32"
     else -> null
 }
 
-private fun formatDeviceInfo(info: SoapyRemoteDeviceInfo) = buildString {
+private fun formatDeviceInfo(info: RadioDeviceCapabilities) = buildString {
     append("Driver: ${info.driverKey}")
     append("\nHardware: ${info.hardwareKey}")
     append("\nRX channels: ${info.rxChannels} • TX channels: ${info.txChannels}")
-    info.rxCapabilities?.let { append(formatCapabilities("RX 0", it)) }
-    info.txCapabilities?.let { append(formatCapabilities("TX 0", it)) }
-    if (info.hardwareInfo.isNotEmpty()) {
+    info.rx?.let { append(formatCapabilities("RX 0", it)) }
+    info.tx?.let { append(formatCapabilities("TX 0", it)) }
+    if (info.metadata.isNotEmpty()) {
         append("\n\nHardware information")
-        info.hardwareInfo.forEach { (key, value) -> append("\n$key: $value") }
+        info.metadata.forEach { (key, value) -> append("\n$key: $value") }
     }
 }
 
-private fun formatCapabilities(label: String, capabilities: SoapyChannelCapabilities) = buildString {
+private fun formatCapabilities(label: String, capabilities: RadioChannelCapabilities) = buildString {
     append("\n\n$label capabilities")
     append("\nFormats: ${capabilities.formats.display()}")
     append("\nAntennas: ${capabilities.antennas.display()}")
-    append("\nGain controls: ${capabilities.gains.display()}")
+    append("\nGain controls: ${capabilities.gains.joinToString().ifEmpty { "not reported" }}")
+    capabilities.gainRanges.forEach { (name, range) ->
+        append("\n  $name: ${listOf(range).displayRanges()}")
+    }
+    append("\nAutomatic gain: ${capabilities.automaticGain.reportedBoolean()}")
+    append("\nFull duplex: ${capabilities.fullDuplex.reportedBoolean()}")
     append("\nFrequency: ${capabilities.frequencyRanges.displayRanges()}")
     append("\nSample rates: ${capabilities.sampleRates.displayHz()}")
     if (capabilities.sampleRateRanges.isNotEmpty()) {
@@ -467,11 +530,33 @@ private fun formatCapabilities(label: String, capabilities: SoapyChannelCapabili
     if (capabilities.bandwidthRanges.isNotEmpty()) {
         append("\nBandwidth ranges: ${capabilities.bandwidthRanges.displayRanges()}")
     }
+    if (capabilities.notReported.isNotEmpty()) {
+        append("\nNot reported: ${capabilities.notReported.joinToString()}")
+    }
+}
+
+private fun Boolean?.reportedBoolean(): String = when (this) {
+    true -> "yes"
+    false -> "no"
+    null -> "not reported"
+}
+
+private fun unknownRangePreferenceKey(
+    host: String,
+    port: Int,
+    deviceArgs: Map<String, String>,
+): String = buildString {
+    append("allow_unknown_tx_range|")
+    append(host.trim())
+    append(':')
+    append(port)
+    append('|')
+    deviceArgs.toSortedMap().forEach { (key, value) -> append(key).append('=').append(value).append(';') }
 }
 
 private fun List<String>.display() = if (isEmpty()) "not reported" else joinToString()
 private fun List<Double>.displayHz() = if (isEmpty()) "not reported" else joinToString { formatHz(it) }
-private fun List<SoapyRange>.displayRanges() = if (isEmpty()) "not reported" else joinToString {
+private fun List<RadioRange>.displayRanges() = if (isEmpty()) "not reported" else joinToString {
     if (it.step > 0.0) "${formatHz(it.minimum)}–${formatHz(it.maximum)} (step ${formatHz(it.step)})"
     else "${formatHz(it.minimum)}–${formatHz(it.maximum)}"
 }

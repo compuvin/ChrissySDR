@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -45,6 +46,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -110,6 +112,7 @@ class MainActivity : ComponentActivity() {
                     onFrequencyChanged = radio::setFrequency,
                     onBandwidthChanged = radio::setBandwidth,
                     onSampleRateChanged = radio::selectSampleRate,
+                    onAllowUnknownTxRange = radio::setAllowUnknownTxRange,
                     onDiscover = {
                         if (Build.VERSION.SDK_INT >= 37 &&
                             checkSelfPermission(LOCAL_NETWORK_PERMISSION) !=
@@ -169,6 +172,7 @@ private fun RadioScreen(
     onFrequencyChanged: (String) -> Unit,
     onBandwidthChanged: (String) -> Unit,
     onSampleRateChanged: (Double?) -> Unit,
+    onAllowUnknownTxRange: (Boolean) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
     onStartRx: () -> Unit,
@@ -236,6 +240,7 @@ private fun RadioScreen(
                 onFrequencyChanged = onFrequencyChanged,
                 onBandwidthChanged = onBandwidthChanged,
                 onSampleRateChanged = onSampleRateChanged,
+                onAllowUnknownTxRange = onAllowUnknownTxRange,
                 onDiscover = onDiscover,
                 onInspect = onInspect,
                 onStartRx = onStartRx,
@@ -272,7 +277,11 @@ private fun RadioScreen(
 
 @Composable
 private fun RadioHeader(connectionStatus: String, onSettings: () -> Unit) {
-    Surface(color = RadioPanel, tonalElevation = 4.dp) {
+    Surface(
+        modifier = Modifier.statusBarsPadding(),
+        color = RadioPanel,
+        tonalElevation = 4.dp,
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -440,11 +449,13 @@ private fun SettingsSheet(
     onFrequencyChanged: (String) -> Unit,
     onBandwidthChanged: (String) -> Unit,
     onSampleRateChanged: (Double?) -> Unit,
+    onAllowUnknownTxRange: (Boolean) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
     onStartRx: () -> Unit,
     onStopRx: () -> Unit,
 ) {
+    var showUnknownRangeWarning by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -505,6 +516,32 @@ private fun SettingsSheet(
         }
         Text(state.txStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
 
+        if (state.txRangesUnreported) {
+            HorizontalDivider(Modifier.padding(vertical = 20.dp))
+            Text("Advanced transmit safety", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Allow TX with unknown hardware limits")
+                    Text(
+                        "Saved only for this server and radio.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = state.allowUnknownTxRange,
+                    onCheckedChange = { enabled ->
+                        if (enabled) showUnknownRangeWarning = true
+                        else onAllowUnknownTxRange(false)
+                    },
+                    enabled = !state.txActive && !state.txBusy,
+                )
+            }
+        }
+
         HorizontalDivider(Modifier.padding(vertical = 20.dp))
         Text("SoapyRemote connection", fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
@@ -562,6 +599,31 @@ private fun SettingsSheet(
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 12.sp,
+        )
+    }
+
+    if (showUnknownRangeWarning) {
+        AlertDialog(
+            onDismissRequest = { showUnknownRangeWarning = false },
+            title = { Text("Unknown transmit limits") },
+            text = {
+                Text(
+                    "This radio did not report its transmit frequency ranges. ChrissySDR cannot " +
+                        "verify that the selected frequency is supported. Enable transmission only " +
+                        "if you have independently verified the radio, frequency, and test setup.",
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { showUnknownRangeWarning = false }) { Text("Cancel") }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showUnknownRangeWarning = false
+                        onAllowUnknownTxRange(true)
+                    },
+                ) { Text("I understand — enable") }
+            },
         )
     }
 }
