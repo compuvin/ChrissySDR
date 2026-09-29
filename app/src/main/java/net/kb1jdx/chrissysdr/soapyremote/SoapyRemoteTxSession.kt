@@ -204,17 +204,27 @@ class SoapyRemoteTxSession private constructor(
     override fun close() {
         running.set(false)
         audioRecord?.runCatching { stop() }
-        writerThread?.join(2_000)
-        audioRecord?.release()
-        audioRecord = null
+        // The microphone paces TX in real time, so there should only be a very
+        // small downstream cushion. Let already-submitted samples reach the
+        // radio before deactivating without waiting for a potentially large or
+        // driver-dependent transport buffer to drain.
+        runCatching { Thread.sleep(TX_TAIL_DRAIN_MS) }
         runCatching {
             transact(
                 SoapyRpcWriter().call(DEACTIVATE_STREAM).int32(streamId).int32(0).int64(0),
             ) { it.int32() }
         }
+        // The writer may be waiting for a flow-control ACK. Interrupt its socket
+        // waits immediately instead of delaying the RX hand-back by up to the
+        // stream socket timeout.
+        runCatching { stream.shutdownInput() }
+        runCatching { stream.shutdownOutput() }
+        runCatching { status.close() }
+        writerThread?.join(250)
+        audioRecord?.release()
+        audioRecord = null
         runCatching { transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(streamId)) { it.requireVoid() } }
         runCatching { stream.close() }
-        runCatching { status.close() }
         runCatching { transact(SoapyRpcWriter().call(UNMAKE)) { it.requireVoid() } }
         runCatching { transact(SoapyRpcWriter().call(HANGUP)) { it.requireVoid() } }
         runCatching { control.close() }
@@ -244,6 +254,7 @@ class SoapyRemoteTxSession private constructor(
         private const val STREAM_TRANSFER_BYTES = MTU - 48
         private const val SOCKET_WINDOW = 1_048_576
         private const val MICROPHONE_SAMPLE_RATE = 48_000
+        private const val TX_TAIL_DRAIN_MS = 40L
         private const val SOAPY_SDR_NOT_SUPPORTED = -5
 
         fun open(
@@ -273,11 +284,11 @@ class SoapyRemoteTxSession private constructor(
                     it.requireVoid()
                 }
                 transact(
-                    SoapyRpcWriter().call(SET_FREQUENCY).char(TX).int32(0)
-                        .float64(frequencyHz).kwargs(emptyMap()),
+                    SoapyRpcWriter().call(SET_SAMPLE_RATE).char(TX).int32(0).float64(sampleRate),
                 ) { it.requireVoid() }
                 transact(
-                    SoapyRpcWriter().call(SET_SAMPLE_RATE).char(TX).int32(0).float64(sampleRate),
+                    SoapyRpcWriter().call(SET_FREQUENCY).char(TX).int32(0)
+                        .float64(frequencyHz).kwargs(emptyMap()),
                 ) { it.requireVoid() }
                 val appliedSampleRate = transact(
                     SoapyRpcWriter().call(GET_SAMPLE_RATE).char(TX).int32(0),

@@ -59,6 +59,7 @@ class RadioViewModel : ViewModel() {
     private var selectedTxCapabilities: SoapyChannelCapabilities? = null
     @Volatile private var rxSession: SoapyRemoteRxSession? = null
     @Volatile private var txSession: SoapyRemoteTxSession? = null
+    @Volatile private var resumeRxAfterTx = false
 
     fun setHost(value: String) = mutableState.update { it.copy(host = value) }
     fun setPort(value: String) = mutableState.update { it.copy(port = value) }
@@ -341,6 +342,7 @@ class RadioViewModel : ViewModel() {
         val frequency = snapshot.frequency.toDouble()
         val format = selectedTxFormat ?: return
         val sampleRate = selectedTxSampleRate ?: return
+        resumeRxAfterTx = snapshot.rxActive
         mutableState.update { it.copy(txBusy = true, txStatus = "Stopping RX and opening AM TX…") }
         worker.execute {
             runCatching {
@@ -387,6 +389,8 @@ class RadioViewModel : ViewModel() {
                 }
             }.onFailure { error ->
                 txSession = null
+                val resumeReceiver = resumeRxAfterTx
+                resumeRxAfterTx = false
                 mutableState.update {
                     it.copy(
                         txActive = false,
@@ -394,6 +398,7 @@ class RadioViewModel : ViewModel() {
                         txStatus = "Could not start AM TX: ${error.message ?: error.javaClass.simpleName}",
                     )
                 }
+                if (resumeReceiver) startReceiver()
             }
         }
     }
@@ -402,11 +407,14 @@ class RadioViewModel : ViewModel() {
         mutableState.update { it.copy(txBusy = true) }
         val session = txSession
         txSession = null
+        val resumeReceiver = resumeRxAfterTx
+        resumeRxAfterTx = false
         worker.execute {
             runCatching { session?.close() }
             mutableState.update {
                 it.copy(txActive = false, txBusy = false, txStatus = message)
             }
+            if (resumeReceiver) startReceiver()
         }
     }
 
@@ -419,6 +427,7 @@ class RadioViewModel : ViewModel() {
         val transmit = txSession
         rxSession = null
         txSession = null
+        resumeRxAfterTx = false
         runCatching { receive?.close() }
         runCatching { transmit?.close() }
         worker.shutdownNow()

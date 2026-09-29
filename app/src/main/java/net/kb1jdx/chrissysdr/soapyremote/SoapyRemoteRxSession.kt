@@ -262,14 +262,14 @@ class SoapyRemoteRxSession private constructor(
                     it.requireVoid()
                 }
                 transact(
+                    SoapyRpcWriter().call(SET_SAMPLE_RATE).char(RX).int32(0).float64(sampleRate),
+                ) { it.requireVoid() }
+                transact(
                     SoapyRpcWriter().call(SET_FREQUENCY).char(RX).int32(0)
                         .float64(frequencyHz).kwargs(emptyMap()),
                 ) { it.requireVoid() }
                 transact(
                     SoapyRpcWriter().call(SET_BANDWIDTH).char(RX).int32(0).float64(bandwidthHz),
-                ) { it.requireVoid() }
-                transact(
-                    SoapyRpcWriter().call(SET_SAMPLE_RATE).char(RX).int32(0).float64(sampleRate),
                 ) { it.requireVoid() }
                 val appliedSampleRate = transact(
                     SoapyRpcWriter().call(GET_SAMPLE_RATE).char(RX).int32(0),
