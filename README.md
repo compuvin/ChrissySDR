@@ -41,6 +41,12 @@ path is an early controlled test facility, not a production-ready transmitter.
 Additional capability negotiation, LAN connection handling, safety mechanisms,
 and on-air validation remain under development.
 
+## Screenshots
+
+| Main receiver | Radio controls |
+| --- | --- |
+| <img src="docs/screenshots/main-screen.png" alt="ChrissySDR main receiver screen" width="360"> | <img src="docs/screenshots/radio-controls.png" alt="ChrissySDR expanded radio controls" width="360"> |
+
 ## Direction
 
 The first complete receiver is planned to include:
