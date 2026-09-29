@@ -1,4 +1,4 @@
-package net.kb1jdx.chrissysdr.dsp
+package com.kb1jdx.chrissysdr.dsp
 
 import org.junit.Assert.assertTrue
 import org.junit.Test

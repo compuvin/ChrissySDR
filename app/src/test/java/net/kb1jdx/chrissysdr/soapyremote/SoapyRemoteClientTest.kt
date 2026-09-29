@@ -1,4 +1,4 @@
-package net.kb1jdx.chrissysdr.soapyremote
+package com.kb1jdx.chrissysdr.soapyremote
 
 import org.junit.Assert.assertEquals
 import org.junit.Test

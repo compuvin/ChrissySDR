@@ -1,398 +1,151 @@
-package net.kb1jdx.chrissysdr
+package com.kb1jdx.chrissysdr
 
-import android.app.Activity
-import android.os.Bundle
+import android.Manifest
 import android.content.pm.PackageManager
-import android.text.InputType
-import android.view.ViewGroup
-import android.view.View
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
-import net.kb1jdx.chrissysdr.soapyremote.SoapyRemoteClient
-import net.kb1jdx.chrissysdr.soapyremote.SoapyRemoteDeviceInfo
-import net.kb1jdx.chrissysdr.soapyremote.SoapyChannelCapabilities
-import net.kb1jdx.chrissysdr.soapyremote.SoapyRange
-import net.kb1jdx.chrissysdr.soapyremote.SoapyRemoteRxSession
+import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-class MainActivity : Activity() {
-    private val client = SoapyRemoteClient()
-    private val localNetworkPermission = "android.permission.ACCESS_LOCAL_NETWORK"
-    private lateinit var status: TextView
-    private lateinit var rxControls: LinearLayout
-    private lateinit var rxStatus: TextView
-    private lateinit var startRx: Button
-    private lateinit var stopRx: Button
-    private lateinit var sampleRate: EditText
-    private lateinit var rxHeading: TextView
-    private var selectedHost: String? = null
-    private var selectedPort: Int = SoapyRemoteClient.DEFAULT_PORT
-    private var selectedDevice: Map<String, String>? = null
-    private var selectedFormat: String? = null
-    @Volatile private var rxSession: SoapyRemoteRxSession? = null
+class MainActivity : ComponentActivity() {
+    private val radio: RadioViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val host = EditText(this).apply {
-            hint = "SoapyRemote server address"
-            setText("192.168.1.100")
-            inputType = InputType.TYPE_CLASS_TEXT
-        }
-        val port = EditText(this).apply {
-            hint = "Port"
-            setText(SoapyRemoteClient.DEFAULT_PORT.toString())
-            inputType = InputType.TYPE_CLASS_NUMBER
-        }
-        status = TextView(this).apply {
-            text = "Not connected"
-            textSize = 17f
-            setPadding(0, 24, 0, 0)
-        }
-        val deviceList = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        val frequency = EditText(this).apply {
-            hint = "RX frequency (Hz)"
-            setText("10000000")
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-        val bandwidth = EditText(this).apply {
-            hint = "RX bandwidth (Hz)"
-            setText("12000")
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-        sampleRate = EditText(this).apply {
-            hint = "RX sample rate (Hz)"
-            setText("48000")
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-        rxStatus = TextView(this).apply {
-            text = "RX stopped"
-            setPadding(0, 16, 0, 0)
-        }
-        startRx = Button(this).apply {
-            text = "Start RX"
-            setOnClickListener {
-                val frequencyHz = frequency.text.toString().toDoubleOrNull()
-                val bandwidthHz = bandwidth.text.toString().toDoubleOrNull()
-                val sampleRateHz = sampleRate.text.toString().toDoubleOrNull()
-                val hostValue = selectedHost
-                val deviceValue = selectedDevice
-                val formatValue = selectedFormat
-                if (frequencyHz == null || bandwidthHz == null || sampleRateHz == null ||
-                    hostValue == null || deviceValue == null || formatValue == null
-                ) {
-                    rxStatus.text = "Select a device and enter valid RX values"
-                    return@setOnClickListener
+        setContent {
+            ChrissySdrTheme {
+                val state by radio.state.collectAsStateWithLifecycle()
+                val microphonePermission = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission(),
+                ) { granted ->
+                    radio.setPermissionMessage(
+                        if (granted) "Microphone ready for AM transmit"
+                        else "Microphone access denied; AM transmit cannot start",
+                    )
                 }
-                startReceiver(
-                    hostValue, selectedPort, deviceValue, frequencyHz, bandwidthHz,
-                    sampleRateHz, formatValue,
-                )
-            }
-        }
-        stopRx = Button(this).apply {
-            text = "Stop RX"
-            isEnabled = false
-            setOnClickListener { stopReceiver() }
-        }
-        rxControls = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-            rxHeading = TextView(context).apply {
-                text = "Live AM RX"
-                textSize = 20f
-                setPadding(0, 32, 0, 8)
-            }
-            addView(rxHeading)
-            addView(frequency, matchWidth())
-            addView(bandwidth, matchWidth())
-            addView(sampleRate, matchWidth())
-            addView(startRx, matchWidth())
-            addView(stopRx, matchWidth())
-            addView(rxStatus, matchWidth())
-        }
-        val connect = Button(this).apply { text = "Discover devices" }
-        connect.setOnClickListener {
-            if (android.os.Build.VERSION.SDK_INT >= 37 &&
-                checkSelfPermission(localNetworkPermission) != PackageManager.PERMISSION_GRANTED
-            ) {
-                status.text = "Local-network permission is required to reach the radio server."
-                requestPermissions(arrayOf(localNetworkPermission), LOCAL_NETWORK_REQUEST)
-                return@setOnClickListener
-            }
-            connect.isEnabled = false
-            status.text = "Connecting…"
-            deviceList.removeAllViews()
-            val requestedHost = host.text.toString()
-            val requestedPort = port.text.toString().toIntOrNull()
-            if (requestedPort == null) {
-                connect.isEnabled = true
-                status.text = "Port must be a number"
-                return@setOnClickListener
-            }
-            Thread {
-                val result = runCatching {
-                    client.discover(requestedHost, requestedPort)
+                val localNetworkPermission = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission(),
+                ) { granted ->
+                    if (granted) radio.discover()
+                    else radio.setPermissionMessage("Local-network access was denied")
                 }
-                runOnUiThread {
-                    connect.isEnabled = true
-                    result.onSuccess { discovery ->
-                        status.text = "Connected\nServer: ${discovery.serverId}\nDevices: ${discovery.devices.size}"
-                        discovery.devices.forEachIndexed { index, device ->
-                            deviceList.addView(Button(this).apply {
-                                val label = device["label"] ?: device["driver"] ?: "Unnamed device"
-                                text = "${index + 1}. $label"
-                                setOnClickListener {
-                                    inspectDevice(requestedHost, requestedPort, device, this)
-                                }
-                            }, matchWidth())
-                        }
-                    }.onFailure { error ->
-                        status.text = "Connection failed\n${error.message ?: error.javaClass.simpleName}"
+
+                LaunchedEffect(state.txAvailable) {
+                    if (state.txAvailable &&
+                        checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 }
-            }.start()
-        }
 
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(40, 48, 40, 48)
-            addView(TextView(context).apply { text = "ChrissySDR"; textSize = 30f })
-            addView(TextView(context).apply {
-                text = "SoapyRemote device discovery"
-                textSize = 18f
-                setPadding(0, 8, 0, 28)
-            })
-            addView(host, matchWidth())
-            addView(port, matchWidth())
-            addView(connect, matchWidth())
-            addView(status, matchWidth())
-            addView(deviceList, matchWidth())
-            addView(rxControls, matchWidth())
-            addView(TextView(context).apply {
-                text = "ChrissySDR ${appVersion()}"
-                textSize = 12f
-                alpha = 0.65f
-                setPadding(0, 48, 0, 8)
-            }, matchWidth())
-        }
-        setContentView(ScrollView(this).apply { addView(content) })
-    }
-
-    private fun inspectDevice(
-        host: String,
-        port: Int,
-        args: Map<String, String>,
-        button: Button,
-    ) {
-        button.isEnabled = false
-        status.text = "Opening ${button.text}…"
-        Thread {
-            val result = runCatching { client.inspect(host, port, args) }
-            runOnUiThread {
-                button.isEnabled = true
-                status.text = result.fold(
-                    onSuccess = {
-                        selectedHost = host
-                        selectedPort = port
-                        selectedDevice = args
-                        configureReceiver(it)
-                        formatDeviceInfo(it) + receiverAvailability(it)
+                RadioScreen(
+                    state = state,
+                    version = appVersion(),
+                    onHostChanged = radio::setHost,
+                    onPortChanged = radio::setPort,
+                    onFrequencyChanged = radio::setFrequency,
+                    onBandwidthChanged = radio::setBandwidth,
+                    onSampleRateChanged = radio::setSampleRate,
+                    onDiscover = {
+                        if (Build.VERSION.SDK_INT >= 37 &&
+                            checkSelfPermission(LOCAL_NETWORK_PERMISSION) !=
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            localNetworkPermission.launch(LOCAL_NETWORK_PERMISSION)
+                        } else {
+                            radio.discover()
+                        }
                     },
-                    onFailure = { "Device query failed\n${it.message ?: it.javaClass.simpleName}" },
+                    onInspect = radio::inspect,
+                    onStartRx = radio::startReceiver,
+                    onStopRx = radio::stopReceiver,
+                    onTxPressed = {
+                        if (state.txActive) {
+                            radio.stopTransmitter()
+                            true
+                        } else if (
+                            checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                            false
+                        } else {
+                            val error = radio.validateTransmit()
+                            if (error != null) {
+                                radio.setPermissionMessage(error)
+                                false
+                            } else {
+                                true
+                            }
+                        }
+                    },
+                    onConfirmTx = radio::startTransmitter,
                 )
             }
-        }.start()
-    }
-
-    private fun startReceiver(
-        host: String,
-        port: Int,
-        args: Map<String, String>,
-        frequencyHz: Double,
-        bandwidthHz: Double,
-        sampleRateHz: Double,
-        format: String,
-    ) {
-        startRx.isEnabled = false
-        rxStatus.text = "Opening device and RX stream…"
-        Thread {
-            val result = runCatching {
-                val session = SoapyRemoteRxSession.open(
-                    host, port, args, frequencyHz, bandwidthHz, sampleRateHz, format,
-                )
-                try {
-                    session.start(
-                        onStatistics = { stats ->
-                            runOnUiThread {
-                                rxStatus.text = buildString {
-                                    append("Playing AM audio ($format, ${formatHz(sampleRateHz)} I/Q)")
-                                    append("\nRate: %.1f samples/s".format(stats.samplesPerSecond))
-                                    append("\nTotal: ${stats.totalSamples} samples")
-                                    append("\nRMS: %.1f dBFS".format(stats.rmsDbfs))
-                                    append("\nPeak: %.1f dBFS".format(stats.peakDbfs))
-                                    append("\nSequence gaps: ${stats.sequenceGaps}")
-                                }
-                            }
-                        },
-                        onError = { error ->
-                            runOnUiThread {
-                                rxStatus.text = "RX stream failed\n${error.message ?: error.javaClass.simpleName}"
-                                startRx.isEnabled = true
-                                stopRx.isEnabled = false
-                            }
-                        },
-                    )
-                    rxSession = session
-                    session
-                } catch (error: Throwable) {
-                    session.close()
-                    throw error
-                }
-            }
-            runOnUiThread {
-                result.onSuccess {
-                    rxStatus.text = "AM audio active; waiting for samples…"
-                    stopRx.isEnabled = true
-                }.onFailure {
-                    rxSession = null
-                    startRx.isEnabled = true
-                    stopRx.isEnabled = false
-                    rxStatus.text = "Could not start RX\n${it.message ?: it.javaClass.simpleName}"
-                }
-            }
-        }.start()
-    }
-
-    private fun stopReceiver() {
-        stopRx.isEnabled = false
-        rxStatus.text = "Stopping RX…"
-        val session = rxSession
-        rxSession = null
-        Thread {
-            runCatching { session?.close() }
-            runOnUiThread {
-                startRx.isEnabled = true
-                rxStatus.text = "RX stopped"
-            }
-        }.start()
-    }
-
-    override fun onDestroy() {
-        val session = rxSession
-        rxSession = null
-        if (session != null) Thread { session.close() }.start()
-        super.onDestroy()
-    }
-
-    private fun formatDeviceInfo(info: SoapyRemoteDeviceInfo) = buildString {
-        append("Device opened and closed successfully")
-        append("\nDriver: ${info.driverKey}")
-        append("\nHardware: ${info.hardwareKey}")
-        append("\nRX channels: ${info.rxChannels}")
-        append("\nTX channels: ${info.txChannels}")
-        info.rxCapabilities?.let { append(formatCapabilities("RX 0", it)) }
-        info.txCapabilities?.let { append(formatCapabilities("TX 0", it)) }
-        if (info.hardwareInfo.isNotEmpty()) {
-            append("\n\nHardware information")
-            info.hardwareInfo.forEach { (key, value) -> append("\n$key: $value") }
         }
     }
-
-    private fun configureReceiver(info: SoapyRemoteDeviceInfo) {
-        val capabilities = info.rxCapabilities
-        val format = when {
-            capabilities == null -> null
-            "CS16" in capabilities.formats -> "CS16"
-            "CF32" in capabilities.formats -> "CF32"
-            else -> null
-        }
-        val rate = capabilities?.preferredSampleRate()
-        selectedFormat = format
-        if (format != null && rate != null) {
-            sampleRate.setText(rate.toPlainRate())
-            rxHeading.text = "Live AM RX ($format over TCP)"
-            rxControls.visibility = View.VISIBLE
-        } else {
-            rxControls.visibility = View.GONE
-            selectedFormat = null
-        }
-    }
-
-    private fun receiverAvailability(info: SoapyRemoteDeviceInfo): String {
-        val capabilities = info.rxCapabilities ?: return "\n\nAM RX unavailable: no RX channel."
-        if (capabilities.formats.none { it == "CS16" || it == "CF32" }) {
-            return "\n\nAM RX unavailable: device does not report CS16 or CF32."
-        }
-        if (capabilities.preferredSampleRate() == null) {
-            return "\n\nAM RX unavailable: device does not report a usable sample rate."
-        }
-        return ""
-    }
-
-    private fun SoapyChannelCapabilities.preferredSampleRate(): Double? {
-        val discrete = sampleRates.filter { it >= MIN_RX_SAMPLE_RATE }.minOrNull()
-        if (discrete != null) return discrete
-        return sampleRateRanges
-            .map { maxOf(it.minimum, MIN_RX_SAMPLE_RATE) }
-            .filterIndexed { index, candidate -> candidate <= sampleRateRanges[index].maximum }
-            .minOrNull()
-    }
-
-    private fun Double.toPlainRate(): String =
-        if (this % 1.0 == 0.0) toLong().toString() else toString()
-
-    private fun formatCapabilities(label: String, capabilities: SoapyChannelCapabilities) = buildString {
-        append("\n\n$label capabilities")
-        append("\nFormats: ${capabilities.formats.display()}")
-        append("\nAntennas: ${capabilities.antennas.display()}")
-        append("\nGain controls: ${capabilities.gains.display()}")
-        append("\nFrequency: ${capabilities.frequencyRanges.displayRanges()}")
-        append("\nSample rates: ${capabilities.sampleRates.displayHz()}")
-        if (capabilities.sampleRateRanges.isNotEmpty()) {
-            append("\nSample-rate ranges: ${capabilities.sampleRateRanges.displayRanges()}")
-        }
-        append("\nBandwidths: ${capabilities.bandwidths.displayHz()}")
-        if (capabilities.bandwidthRanges.isNotEmpty()) {
-            append("\nBandwidth ranges: ${capabilities.bandwidthRanges.displayRanges()}")
-        }
-    }
-
-    private fun List<String>.display() = if (isEmpty()) "not reported" else joinToString()
-    private fun List<Double>.displayHz() = if (isEmpty()) "not reported" else joinToString { formatHz(it) }
-    private fun List<SoapyRange>.displayRanges() = if (isEmpty()) "not reported" else joinToString {
-        if (it.step > 0.0) "${formatHz(it.minimum)}–${formatHz(it.maximum)} (step ${formatHz(it.step)})"
-        else "${formatHz(it.minimum)}–${formatHz(it.maximum)}"
-    }
-
-    private fun formatHz(value: Double): String = when {
-        kotlin.math.abs(value) >= 1_000_000 -> "%.6g MHz".format(value / 1_000_000)
-        kotlin.math.abs(value) >= 1_000 -> "%.6g kHz".format(value / 1_000)
-        else -> "%.6g Hz".format(value)
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray,
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == LOCAL_NETWORK_REQUEST) {
-            status.text = if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-                "Local-network access granted. Tap Discover devices again."
-            } else {
-                "Local-network access denied. Enable Nearby devices in Android app settings."
-            }
-        }
-    }
-
-    private fun matchWidth() = LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.MATCH_PARENT,
-        ViewGroup.LayoutParams.WRAP_CONTENT,
-    )
 
     @Suppress("DEPRECATION")
     private fun appVersion(): String = packageManager
@@ -400,7 +153,437 @@ class MainActivity : Activity() {
         .versionName ?: "unknown"
 
     companion object {
-        private const val LOCAL_NETWORK_REQUEST = 100
-        private const val MIN_RX_SAMPLE_RATE = 8_000.0
+        private const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RadioScreen(
+    state: RadioUiState,
+    version: String,
+    onHostChanged: (String) -> Unit,
+    onPortChanged: (String) -> Unit,
+    onFrequencyChanged: (String) -> Unit,
+    onBandwidthChanged: (String) -> Unit,
+    onSampleRateChanged: (String) -> Unit,
+    onDiscover: () -> Unit,
+    onInspect: (RadioDeviceChoice) -> Unit,
+    onStartRx: () -> Unit,
+    onStopRx: () -> Unit,
+    onTxPressed: () -> Boolean,
+    onConfirmTx: () -> Unit,
+) {
+    var settingsVisible by rememberSaveable { mutableStateOf(state.devices.isEmpty()) }
+    var showTransmitConfirmation by remember { mutableStateOf(false) }
+
+    Scaffold(
+        containerColor = RadioBackground,
+        topBar = {
+            RadioHeader(
+                connectionStatus = state.connectionStatus,
+                onSettings = { settingsVisible = true },
+            )
+        },
+        bottomBar = {
+            OperatingBar(
+                frequency = state.frequency.toDoubleOrNull(),
+                mode = state.mode,
+                transmitting = state.txActive,
+                txBusy = state.txBusy,
+                txAvailable = state.txAvailable,
+                onOpenSettings = { settingsVisible = true },
+                onTx = {
+                    if (state.txActive) {
+                        onTxPressed()
+                    } else if (onTxPressed()) {
+                        showTransmitConfirmation = true
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            SpectrumPlaceholder(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                centerFrequency = state.frequency.toDoubleOrNull(),
+                active = state.rxActive,
+            )
+            Spacer(Modifier.height(12.dp))
+            StatusPanel(state)
+        }
+    }
+
+    if (settingsVisible) {
+        ModalBottomSheet(
+            onDismissRequest = { settingsVisible = false },
+            containerColor = RadioPanel,
+        ) {
+            SettingsSheet(
+                state = state,
+                version = version,
+                onHostChanged = onHostChanged,
+                onPortChanged = onPortChanged,
+                onFrequencyChanged = onFrequencyChanged,
+                onBandwidthChanged = onBandwidthChanged,
+                onSampleRateChanged = onSampleRateChanged,
+                onDiscover = onDiscover,
+                onInspect = onInspect,
+                onStartRx = onStartRx,
+                onStopRx = onStopRx,
+            )
+        }
+    }
+
+    if (showTransmitConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showTransmitConfirmation = false },
+            title = { Text("Confirm AM transmit") },
+            text = {
+                Text(
+                    "Transmit microphone audio on ${displayFrequency(state.frequency.toDoubleOrNull())} " +
+                        "for up to 30 seconds? Use a dummy load or controlled test setup and " +
+                        "operate only within your license privileges.",
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { showTransmitConfirmation = false }) { Text("Cancel") }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showTransmitConfirmation = false
+                        onConfirmTx()
+                    },
+                ) { Text("Start TX") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun RadioHeader(connectionStatus: String, onSettings: () -> Unit) {
+    Surface(color = RadioPanel, tonalElevation = 4.dp) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("ChrissySDR", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    connectionStatus,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                )
+            }
+            TextButton(onClick = onSettings) { Text("SETTINGS") }
+        }
+    }
+}
+
+@Composable
+private fun SpectrumPlaceholder(
+    modifier: Modifier,
+    centerFrequency: Double?,
+    active: Boolean,
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = SpectrumBackground),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            Canvas(Modifier.fillMaxSize().padding(12.dp)) {
+                val gridColor = Color(0x2638D6C7)
+                repeat(9) { index ->
+                    val x = size.width * index / 8f
+                    drawLine(gridColor, Offset(x, 0f), Offset(x, size.height), 1f)
+                }
+                repeat(7) { index ->
+                    val y = size.height * index / 6f
+                    drawLine(gridColor, Offset(0f, y), Offset(size.width, y), 1f)
+                }
+                val path = Path()
+                val baseline = size.height * 0.7f
+                path.moveTo(0f, baseline)
+                repeat(96) { index ->
+                    val x = size.width * index / 95f
+                    val center = kotlin.math.abs(index - 48) / 48f
+                    val signal = if (active) {
+                        kotlin.math.exp(-center * 12f) * size.height * 0.38f
+                    } else 0f
+                    val ripple = kotlin.math.sin(index * 1.7f) * size.height * 0.012f
+                    path.lineTo(x, baseline - signal + ripple)
+                }
+                drawPath(path, SpectrumTrace, style = Stroke(3f, cap = StrokeCap.Round))
+                drawLine(
+                    color = FrequencyMarker,
+                    start = Offset(size.width / 2, 0f),
+                    end = Offset(size.width / 2, size.height),
+                    strokeWidth = 2f,
+                )
+            }
+            Column(
+                modifier = Modifier.align(Alignment.TopStart).padding(20.dp),
+            ) {
+                Text("SPECTRUM", color = SpectrumTrace, fontWeight = FontWeight.Bold)
+                Text(
+                    if (active) "RX stream active • FFT coming next" else "Display preview • start RX for audio",
+                    color = Color(0xFF91A8A5),
+                    fontSize = 12.sp,
+                )
+            }
+            Text(
+                displayFrequency(centerFrequency),
+                modifier = Modifier.align(Alignment.BottomCenter).padding(20.dp),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 18.sp,
+                color = Color.White,
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusPanel(state: RadioUiState) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = RadioPanel),
+        shape = RoundedCornerShape(14.dp),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+            Text(
+                when {
+                    state.txActive -> state.txStatus
+                    state.rxActive || state.rxBusy -> state.rxStatus
+                    else -> "Ready • ${state.rxStatus}"
+                },
+                color = if (state.txActive) TxRed else MaterialTheme.colorScheme.onSurface,
+                fontSize = 13.sp,
+                fontWeight = if (state.txActive) FontWeight.Bold else FontWeight.Normal,
+            )
+        }
+    }
+}
+
+@Composable
+private fun OperatingBar(
+    frequency: Double?,
+    mode: String,
+    transmitting: Boolean,
+    txBusy: Boolean,
+    txAvailable: Boolean,
+    onOpenSettings: () -> Unit,
+    onTx: () -> Unit,
+) {
+    Surface(color = RadioPanel, tonalElevation = 8.dp) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f).clickable(onClick = onOpenSettings),
+                horizontalAlignment = Alignment.Start,
+            ) {
+                Text("FREQUENCY", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    displayFrequency(frequency),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Button(
+                onClick = onTx,
+                enabled = (txAvailable || transmitting) && !txBusy,
+                modifier = Modifier.size(70.dp),
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (transmitting) Color.White else TxRed,
+                    contentColor = if (transmitting) TxRed else Color.White,
+                    disabledContainerColor = Color(0xFF4B5556),
+                ),
+                contentPadding = PaddingValues(0.dp),
+            ) {
+                Text(if (transmitting) "STOP" else "TX", fontWeight = FontWeight.Black)
+            }
+            Column(
+                modifier = Modifier.weight(1f).clickable(onClick = onOpenSettings),
+                horizontalAlignment = Alignment.End,
+            ) {
+                Text("MODE", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(mode, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = SpectrumTrace)
+                Text("Pull up controls", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSheet(
+    state: RadioUiState,
+    version: String,
+    onHostChanged: (String) -> Unit,
+    onPortChanged: (String) -> Unit,
+    onFrequencyChanged: (String) -> Unit,
+    onBandwidthChanged: (String) -> Unit,
+    onSampleRateChanged: (String) -> Unit,
+    onDiscover: () -> Unit,
+    onInspect: (RadioDeviceChoice) -> Unit,
+    onStartRx: () -> Unit,
+    onStopRx: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(0.9f)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+    ) {
+        Text("Radio controls", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Frequency and mode remain visible in the operating bar.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(18.dp))
+        OutlinedTextField(
+            value = state.frequency,
+            onValueChange = onFrequencyChanged,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Frequency (Hz)") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            singleLine = true,
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                value = state.bandwidth,
+                onValueChange = onBandwidthChanged,
+                modifier = Modifier.weight(1f),
+                label = { Text("RX bandwidth") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = state.sampleRate,
+                onValueChange = onSampleRateChanged,
+                modifier = Modifier.weight(1f),
+                label = { Text("Sample rate") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(
+                onClick = if (state.rxActive) onStopRx else onStartRx,
+                enabled = state.rxAvailable && !state.rxBusy && !state.txActive,
+                modifier = Modifier.weight(1f),
+            ) { Text(if (state.rxActive) "Stop RX" else "Start RX") }
+            OutlinedButton(
+                onClick = {},
+                enabled = false,
+                modifier = Modifier.weight(1f),
+            ) { Text("Mode: ${state.mode}") }
+        }
+        Text(state.rxStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+        Text(state.txStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+
+        HorizontalDivider(Modifier.padding(vertical = 20.dp))
+        Text("SoapyRemote connection", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                value = state.host,
+                onValueChange = onHostChanged,
+                modifier = Modifier.weight(2f),
+                label = { Text("LAN server") },
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = state.port,
+                onValueChange = onPortChanged,
+                modifier = Modifier.weight(1f),
+                label = { Text("Port") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+            )
+        }
+        Button(
+            onClick = onDiscover,
+            enabled = !state.discovering && !state.inspecting && !state.rxActive && !state.txActive,
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        ) { Text(if (state.discovering) "Discovering…" else "Discover devices") }
+        Text(
+            state.connectionStatus,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(vertical = 8.dp),
+        )
+        state.devices.forEach { device ->
+            OutlinedButton(
+                onClick = { onInspect(device) },
+                enabled = !state.inspecting,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(device.label) }
+        }
+        if (state.deviceDetails.isNotBlank()) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                colors = CardDefaults.cardColors(containerColor = SpectrumBackground),
+            ) {
+                Text(
+                    state.deviceDetails,
+                    modifier = Modifier.padding(14.dp),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                )
+            }
+        }
+        Text(
+            "ChrissySDR $version",
+            modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp,
+        )
+    }
+}
+
+@Composable
+private fun ChrissySdrTheme(content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = darkColorScheme(
+            primary = SpectrumTrace,
+            secondary = FrequencyMarker,
+            background = RadioBackground,
+            surface = RadioPanel,
+            onBackground = Color(0xFFE4F1EF),
+            onSurface = Color(0xFFE4F1EF),
+        ),
+        content = content,
+    )
+}
+
+private fun displayFrequency(value: Double?): String {
+    if (value == null) return "—"
+    return if (value >= 1_000_000) "%.6f MHz".format(value / 1_000_000)
+    else formatHz(value)
+}
+
+private val RadioBackground = Color(0xFF071315)
+private val RadioPanel = Color(0xFF102326)
+private val SpectrumBackground = Color(0xFF061012)
+private val SpectrumTrace = Color(0xFF38D6C7)
+private val FrequencyMarker = Color(0xFFFFC857)
+private val TxRed = Color(0xFFD83A3A)

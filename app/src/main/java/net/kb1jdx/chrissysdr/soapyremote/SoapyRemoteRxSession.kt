@@ -1,4 +1,4 @@
-package net.kb1jdx.chrissysdr.soapyremote
+package com.kb1jdx.chrissysdr.soapyremote
 
 import android.media.AudioAttributes
 import android.media.AudioFormat
@@ -13,7 +13,7 @@ import java.net.SocketTimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.log10
 import kotlin.math.sqrt
-import net.kb1jdx.chrissysdr.dsp.AmDemodulator
+import com.kb1jdx.chrissysdr.dsp.AmDemodulator
 
 data class RxStatistics(
     val totalSamples: Long,

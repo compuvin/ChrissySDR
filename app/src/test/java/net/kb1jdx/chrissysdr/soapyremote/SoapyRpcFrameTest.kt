@@ -1,4 +1,4 @@
-package net.kb1jdx.chrissysdr.soapyremote
+package com.kb1jdx.chrissysdr.soapyremote
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -21,4 +21,3 @@ class SoapyRpcFrameTest {
         SoapyRpcFrame.decode(bytes)
     }
 }
-

@@ -1,4 +1,4 @@
-package net.kb1jdx.chrissysdr.soapyremote
+package com.kb1jdx.chrissysdr.soapyremote
 
 import java.net.InetSocketAddress
 import java.net.Socket

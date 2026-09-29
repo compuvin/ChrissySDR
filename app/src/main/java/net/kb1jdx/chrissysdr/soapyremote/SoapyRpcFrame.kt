@@ -1,4 +1,4 @@
-package net.kb1jdx.chrissysdr.soapyremote
+package com.kb1jdx.chrissysdr.soapyremote
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder

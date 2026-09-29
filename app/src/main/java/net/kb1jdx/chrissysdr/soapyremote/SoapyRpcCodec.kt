@@ -1,4 +1,4 @@
-package net.kb1jdx.chrissysdr.soapyremote
+package com.kb1jdx.chrissysdr.soapyremote
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -72,7 +72,9 @@ class SoapyRpcReader(payload: ByteArray) {
         expect(RpcType.STRING)
         val length = int32()
         require(length >= 0 && length <= input.available()) { "Invalid string length $length" }
-        return input.readNBytes(length).toString(Charsets.UTF_8)
+        val encoded = ByteArray(length)
+        input.readFully(encoded)
+        return encoded.toString(Charsets.UTF_8)
     }
 
     fun kwargs(): Map<String, String> {

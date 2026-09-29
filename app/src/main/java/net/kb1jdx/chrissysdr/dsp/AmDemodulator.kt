@@ -1,4 +1,4 @@
-package net.kb1jdx.chrissysdr.dsp
+package com.kb1jdx.chrissysdr.dsp
 
 import kotlin.math.PI
 import kotlin.math.abs
@@ -78,4 +78,3 @@ class AmDemodulator(
         private const val AGC_FLOOR = 1.0e-6
     }
 }
-
