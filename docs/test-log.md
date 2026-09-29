@@ -12,6 +12,19 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-09-28 — Service and pipeline receiver regression
+
+- **App version:** `0.3.0-dev.14`
+- **Radio:** FLEX-1500 via flex1500d
+- **Transport:** SoapyRemote over LAN
+- **Scope:** Receiver regression after moving connection/stream ownership into
+  the foreground radio service and separating Soapy transport, DSP, and Android
+  audio components.
+- **Result:** Successful. The operator confirmed that the receiver still works
+  well.
+- **Not explicitly tested:** Background longevity, notification stop action,
+  transmit regression, TX-to-RX restoration, and process/service termination.
+
 ## 2026-09-28 — Capability discovery RX regression
 
 - **App version:** `0.3.0-dev.11`

@@ -2,15 +2,12 @@ package com.kb1jdx.chrissysdr
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
-import com.kb1jdx.chrissysdr.radio.RadioBackend
 import com.kb1jdx.chrissysdr.radio.RadioChannelCapabilities
 import com.kb1jdx.chrissysdr.radio.RadioDeviceCapabilities
 import com.kb1jdx.chrissysdr.radio.RadioEndpoint
 import com.kb1jdx.chrissysdr.radio.RadioRange
-import com.kb1jdx.chrissysdr.radio.RadioReceiver
-import com.kb1jdx.chrissysdr.radio.RadioTransmitter
+import com.kb1jdx.chrissysdr.radio.RadioService
 import com.kb1jdx.chrissysdr.radio.ReceiverConfig
-import com.kb1jdx.chrissysdr.radio.SoapyRemoteBackend
 import com.kb1jdx.chrissysdr.radio.TransmitterConfig
 import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,7 +49,6 @@ data class RadioUiState(
 )
 
 class RadioViewModel(application: Application) : AndroidViewModel(application) {
-    private val backend: RadioBackend = SoapyRemoteBackend()
     private val preferences = application.getSharedPreferences("radio_safety", 0)
     private val worker = Executors.newCachedThreadPool()
     private val mutableState = MutableStateFlow(RadioUiState())
@@ -66,9 +62,24 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     private var selectedTxSampleRate: Double? = null
     private var selectedTxCapabilities: RadioChannelCapabilities? = null
     private var selectedRadioPreferenceKey: String? = null
-    @Volatile private var rxSession: RadioReceiver? = null
-    @Volatile private var txSession: RadioTransmitter? = null
+    @Volatile private var radioService: RadioService? = null
     @Volatile private var resumeRxAfterTx = false
+
+    fun attachService(service: RadioService) {
+        radioService = service
+        service.setStateListener { receiving, transmitting ->
+            mutableState.update {
+                it.copy(
+                    rxActive = receiving,
+                    rxBusy = false,
+                    txActive = transmitting,
+                    txBusy = false,
+                    rxStatus = if (!receiving && it.rxActive) "RX stopped" else it.rxStatus,
+                    txStatus = if (!transmitting && it.txActive) "AM TX stopped" else it.txStatus,
+                )
+            }
+        }
+    }
 
     fun setHost(value: String) = mutableState.update { it.copy(host = value) }
     fun setPort(value: String) = mutableState.update { it.copy(port = value) }
@@ -107,7 +118,14 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         worker.execute {
-            runCatching { backend.discover(RadioEndpoint(snapshot.host, port)) }
+            val service = radioService
+            if (service == null) {
+                mutableState.update {
+                    it.copy(discovering = false, connectionStatus = "Radio service is not ready")
+                }
+                return@execute
+            }
+            runCatching { service.discover(RadioEndpoint(snapshot.host, port)) }
                 .onSuccess { discovery ->
                     mutableState.update {
                         it.copy(
@@ -142,8 +160,15 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(inspecting = true, connectionStatus = "Opening ${choice.label}…")
         }
         worker.execute {
+            val service = radioService
+            if (service == null) {
+                mutableState.update {
+                    it.copy(inspecting = false, connectionStatus = "Radio service is not ready")
+                }
+                return@execute
+            }
             runCatching {
-                backend.inspect(RadioEndpoint(snapshot.host, port), choice.arguments)
+                service.inspect(RadioEndpoint(snapshot.host, port), choice.arguments)
             }
                 .onSuccess { info -> configureDevice(snapshot.host, port, choice, info) }
                 .onFailure { error ->
@@ -288,8 +313,15 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         }
         mutableState.update { it.copy(rxBusy = true, rxStatus = "Opening RX stream…") }
         worker.execute {
+            val service = radioService
+            if (service == null) {
+                mutableState.update {
+                    it.copy(rxBusy = false, rxStatus = "Radio service is not ready")
+                }
+                return@execute
+            }
             runCatching {
-                val session = backend.openReceiver(
+                service.startReceiver(
                     ReceiverConfig(
                         endpoint = RadioEndpoint(snapshot.host, selectedPort),
                         deviceArguments = device,
@@ -298,48 +330,37 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         sampleRate = sampleRate,
                         format = format,
                     ),
+                    onStatistics = { stats ->
+                        mutableState.update {
+                            it.copy(
+                                rxStatus = buildString {
+                                    append("Playing AM • %.1f ksps".format(stats.samplesPerSecond / 1_000))
+                                    append(" • RMS %.1f dBFS".format(stats.rmsDbfs))
+                                    append(" • gaps ${stats.sequenceGaps}")
+                                },
+                            )
+                        }
+                    },
+                    onError = { error ->
+                        mutableState.update {
+                            it.copy(
+                                rxActive = false,
+                                rxBusy = false,
+                                rxStatus = "RX failed: ${error.message ?: error.javaClass.simpleName}",
+                            )
+                        }
+                    },
                 )
-                try {
-                    session.start(
-                        onStatistics = { stats ->
-                            mutableState.update {
-                                it.copy(
-                                    rxStatus = buildString {
-                                        append("Playing AM • %.1f ksps".format(stats.samplesPerSecond / 1_000))
-                                        append(" • RMS %.1f dBFS".format(stats.rmsDbfs))
-                                        append(" • gaps ${stats.sequenceGaps}")
-                                    },
-                                )
-                            }
-                        },
-                        onError = { error ->
-                            mutableState.update {
-                                it.copy(
-                                    rxActive = false,
-                                    rxBusy = false,
-                                    rxStatus = "RX failed: ${error.message ?: error.javaClass.simpleName}",
-                                )
-                            }
-                            closeReceiverAsync()
-                        },
-                    )
-                    rxSession = session
-                    session
-                } catch (error: Throwable) {
-                    session.close()
-                    throw error
-                }
-            }.onSuccess { session ->
+            }.onSuccess { appliedSampleRate ->
                 mutableState.update {
                     it.copy(
                         rxActive = true,
                         rxBusy = false,
-                        appliedSampleRateHz = session.appliedSampleRate,
-                        rxStatus = "AM audio active • applied ${formatHz(session.appliedSampleRate)}",
+                        appliedSampleRateHz = appliedSampleRate,
+                        rxStatus = "AM audio active • applied ${formatHz(appliedSampleRate)}",
                     )
                 }
             }.onFailure { error ->
-                rxSession = null
                 mutableState.update {
                     it.copy(
                         rxActive = false,
@@ -357,10 +378,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun closeReceiverAsync() {
-        val session = rxSession
-        rxSession = null
         worker.execute {
-            runCatching { session?.close() }
+            runCatching { radioService?.stopReceiver() }
             mutableState.update {
                 it.copy(rxActive = false, rxBusy = false, rxStatus = "RX stopped")
             }
@@ -397,11 +416,15 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         resumeRxAfterTx = snapshot.rxActive
         mutableState.update { it.copy(txBusy = true, txStatus = "Stopping RX and opening AM TX…") }
         worker.execute {
+            val service = radioService
+            if (service == null) {
+                mutableState.update {
+                    it.copy(txBusy = false, txStatus = "Radio service is not ready")
+                }
+                return@execute
+            }
             runCatching {
-                val receive = rxSession
-                rxSession = null
-                receive?.close()
-                val session = backend.openTransmitter(
+                service.startTransmitter(
                     TransmitterConfig(
                         endpoint = RadioEndpoint(snapshot.host, selectedPort),
                         deviceArguments = device,
@@ -409,31 +432,22 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         sampleRate = sampleRate,
                         format = format,
                     ),
-                )
-                try {
-                    session.start(
-                        onStatistics = { stats ->
-                            mutableState.update {
-                                it.copy(
-                                    txStatus = "TRANSMITTING AM • ${stats.secondsRemaining}s • " +
-                                        "mic %.0f%%".format(stats.microphonePeak * 100),
-                                )
-                            }
-                        },
-                        onStopped = { stopTransmitter("AM TX time limit reached") },
-                        onError = { error ->
-                            stopTransmitter(
-                                "AM TX failed: ${error.message ?: error.javaClass.simpleName}",
+                    onStatistics = { stats ->
+                        mutableState.update {
+                            it.copy(
+                                txStatus = "TRANSMITTING AM • ${stats.secondsRemaining}s • " +
+                                    "mic %.0f%%".format(stats.microphonePeak * 100),
                             )
-                        },
-                    )
-                    txSession = session
-                    session
-                } catch (error: Throwable) {
-                    session.close()
-                    throw error
-                }
-            }.onSuccess { session ->
+                        }
+                    },
+                    onStopped = { stopTransmitter("AM TX time limit reached") },
+                    onError = { error ->
+                        stopTransmitter(
+                            "AM TX failed: ${error.message ?: error.javaClass.simpleName}",
+                        )
+                    },
+                )
+            }.onSuccess { appliedSampleRate ->
                 mutableState.update {
                     it.copy(
                         rxActive = false,
@@ -442,11 +456,10 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         txActive = true,
                         txBusy = false,
                         txStatus = "TRANSMITTING AM; microphone active • " +
-                            "applied ${formatHz(session.appliedSampleRate)}",
+                            "applied ${formatHz(appliedSampleRate)}",
                     )
                 }
             }.onFailure { error ->
-                txSession = null
                 val resumeReceiver = resumeRxAfterTx
                 resumeRxAfterTx = false
                 mutableState.update {
@@ -463,12 +476,10 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stopTransmitter(message: String = "AM TX stopped") {
         mutableState.update { it.copy(txBusy = true) }
-        val session = txSession
-        txSession = null
         val resumeReceiver = resumeRxAfterTx
         resumeRxAfterTx = false
         worker.execute {
-            runCatching { session?.close() }
+            runCatching { radioService?.stopTransmitter() }
             mutableState.update {
                 it.copy(txActive = false, txBusy = false, txStatus = message)
             }
@@ -481,13 +492,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
-        val receive = rxSession
-        val transmit = txSession
-        rxSession = null
-        txSession = null
         resumeRxAfterTx = false
-        runCatching { receive?.close() }
-        runCatching { transmit?.close() }
+        radioService?.setStateListener(null)
+        radioService = null
         worker.shutdownNow()
     }
 }

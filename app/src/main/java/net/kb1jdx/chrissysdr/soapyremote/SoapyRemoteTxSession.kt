@@ -1,9 +1,7 @@
 package com.kb1jdx.chrissysdr.soapyremote
 
-import android.annotation.SuppressLint
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
+import com.kb1jdx.chrissysdr.audio.AndroidMicrophoneInput
+import com.kb1jdx.chrissysdr.dsp.AmTransmitPipeline
 import java.io.DataInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -11,7 +9,6 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
-import com.kb1jdx.chrissysdr.dsp.AmModulator
 
 data class TxStatistics(
     val totalSamples: Long,
@@ -30,9 +27,8 @@ class SoapyRemoteTxSession private constructor(
 ) : AutoCloseable {
     private val running = AtomicBoolean(false)
     private var writerThread: Thread? = null
-    @Volatile private var audioRecord: AudioRecord? = null
+    @Volatile private var microphoneInput: AndroidMicrophoneInput? = null
 
-    @SuppressLint("MissingPermission")
     fun start(
         maximumSeconds: Int = TEST_TX_LIMIT_SECONDS,
         onStatistics: (TxStatistics) -> Unit,
@@ -42,35 +38,13 @@ class SoapyRemoteTxSession private constructor(
         check(running.compareAndSet(false, true)) { "TX stream is already running" }
         require(maximumSeconds in 1..TEST_TX_LIMIT_SECONDS) { "Invalid TX time limit" }
 
-        val minimumBuffer = AudioRecord.getMinBufferSize(
-            MICROPHONE_SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-        )
-        check(minimumBuffer > 0) { "Android microphone input is unavailable ($minimumBuffer)" }
-        audioRecord = AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.MIC)
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(MICROPHONE_SAMPLE_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                    .build(),
-            )
-            .setBufferSizeInBytes(maxOf(minimumBuffer * 2, MICROPHONE_SAMPLE_RATE / 5 * 2))
-            .build()
-            .also {
-                check(it.state == AudioRecord.STATE_INITIALIZED) { "Android microphone failed to initialize" }
-            }
+        microphoneInput = AndroidMicrophoneInput(MICROPHONE_SAMPLE_RATE)
 
         val activation = transact(
             SoapyRpcWriter().call(ACTIVATE_STREAM).int32(streamId).int32(0).int64(0).int32(0),
         ) { it.int32() }
         check(activation == 0) { "SoapyRemote activateStream returned $activation" }
-        audioRecord!!.startRecording()
-        check(audioRecord!!.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-            "Android microphone did not start"
-        }
+        microphoneInput!!.start()
         writerThread = Thread(
             { transmitLoop(maximumSeconds, onStatistics, onStopped, onError) },
             "SoapyRemote-TX",
@@ -85,15 +59,14 @@ class SoapyRemoteTxSession private constructor(
     ) {
         val input = DataInputStream(stream.getInputStream())
         val output = stream.getOutputStream()
-        val microphone = audioRecord ?: return
+        val microphone = microphoneInput ?: return
         val bytesPerElement = if (streamFormat == "CS16") 4 else 8
         val maximumElements = (STREAM_TRANSFER_BYTES - STREAM_HEADER_BYTES) / bytesPerElement
         val audio = ShortArray(1_024)
-        val modulator = AmModulator()
+        val audioPipeline = AmTransmitPipeline(MICROPHONE_SAMPLE_RATE, outputSampleRate)
         var sequence = 0L
         var acknowledgedSequence: Long
         var flowWindow: Int
-        var resamplePhase = 0.0
         var totalSamples = 0L
         var intervalSamples = 0L
         var microphonePeak = 0.0
@@ -113,34 +86,30 @@ class SoapyRemoteTxSession private constructor(
                     break
                 }
 
-                val count = microphone.read(audio, 0, audio.size, AudioRecord.READ_BLOCKING)
-                check(count >= 0) { "Android microphone read failed ($count)" }
+                val count = microphone.read(audio)
                 if (count == 0) continue
+                repeat(count) { index ->
+                    microphonePeak = maxOf(microphonePeak, abs(audio[index].toDouble() / 32768.0))
+                }
+                val iq = audioPipeline.process(audio, count)
 
-                var index = 0
-                while (index < count && running.get()) {
+                var iqIndex = 0
+                while (iqIndex < iq.size && running.get()) {
                     val packet = ByteBuffer.allocate(STREAM_TRANSFER_BYTES).order(ByteOrder.BIG_ENDIAN)
                     packet.position(STREAM_HEADER_BYTES)
                     packet.order(ByteOrder.LITTLE_ENDIAN)
-                    var elements = 0
-                    while (index < count && elements < maximumElements) {
-                        val microphoneSample = audio[index++].toDouble() / 32768.0
-                        microphonePeak = maxOf(microphonePeak, abs(microphoneSample))
-                        resamplePhase += outputSampleRate
-                        while (resamplePhase >= MICROPHONE_SAMPLE_RATE && elements < maximumElements) {
-                            resamplePhase -= MICROPHONE_SAMPLE_RATE
-                            val i = modulator.process(microphoneSample)
-                            if (streamFormat == "CS16") {
-                                packet.putShort((i * Short.MAX_VALUE).toInt().toShort())
-                                packet.putShort(0)
-                            } else {
-                                packet.putFloat(i.toFloat())
-                                packet.putFloat(0f)
-                            }
-                            elements++
+                    val elements = minOf(maximumElements, (iq.size - iqIndex) / 2)
+                    repeat(elements) {
+                        val i = iq[iqIndex++]
+                        val q = iq[iqIndex++]
+                        if (streamFormat == "CS16") {
+                            packet.putShort((i.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort())
+                            packet.putShort((q.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort())
+                        } else {
+                            packet.putFloat(i)
+                            packet.putFloat(q)
                         }
                     }
-                    if (elements == 0) continue
 
                     while (sequence - acknowledgedSequence >= flowWindow) {
                         val ack = readHeader(input)
@@ -203,7 +172,8 @@ class SoapyRemoteTxSession private constructor(
 
     override fun close() {
         running.set(false)
-        audioRecord?.runCatching { stop() }
+        microphoneInput?.runCatching { close() }
+        microphoneInput = null
         // The microphone paces TX in real time, so there should only be a very
         // small downstream cushion. Let already-submitted samples reach the
         // radio before deactivating without waiting for a potentially large or
@@ -221,8 +191,6 @@ class SoapyRemoteTxSession private constructor(
         runCatching { stream.shutdownOutput() }
         runCatching { status.close() }
         writerThread?.join(250)
-        audioRecord?.release()
-        audioRecord = null
         runCatching { transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(streamId)) { it.requireVoid() } }
         runCatching { stream.close() }
         runCatching { transact(SoapyRpcWriter().call(UNMAKE)) { it.requireVoid() } }

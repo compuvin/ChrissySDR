@@ -1,8 +1,7 @@
 package com.kb1jdx.chrissysdr.soapyremote
 
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioTrack
+import com.kb1jdx.chrissysdr.audio.AndroidAudioOutput
+import com.kb1jdx.chrissysdr.dsp.AmReceivePipeline
 import java.io.DataInputStream
 import java.io.OutputStream
 import java.nio.ByteBuffer
@@ -13,7 +12,6 @@ import java.net.SocketTimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.log10
 import kotlin.math.sqrt
-import com.kb1jdx.chrissysdr.dsp.AmDemodulator
 
 data class RxStatistics(
     val totalSamples: Long,
@@ -33,7 +31,7 @@ class SoapyRemoteRxSession private constructor(
 ) : AutoCloseable {
     private val running = AtomicBoolean(false)
     private var readerThread: Thread? = null
-    @Volatile private var audioTrack: AudioTrack? = null
+    @Volatile private var audioOutput: AndroidAudioOutput? = null
 
     fun start(onStatistics: (RxStatistics) -> Unit, onError: (Throwable) -> Unit) {
         check(running.compareAndSet(false, true)) { "RX stream is already running" }
@@ -46,33 +44,7 @@ class SoapyRemoteRxSession private constructor(
         check(audioSampleRate >= MIN_AUDIO_SAMPLE_RATE) {
             "The selected sample rate is too low for Android audio ($inputSampleRate Hz)"
         }
-        val minimumAudioBuffer = AudioTrack.getMinBufferSize(
-            audioSampleRate,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-        )
-        check(minimumAudioBuffer > 0) { "Android audio output is unavailable ($minimumAudioBuffer)" }
-        audioTrack = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build(),
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(audioSampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build(),
-            )
-            .setBufferSizeInBytes(maxOf(minimumAudioBuffer * 2, audioSampleRate / 5 * 2))
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
-            .also {
-                check(it.state == AudioTrack.STATE_INITIALIZED) { "Android audio output failed to initialize" }
-                it.play()
-            }
+        audioOutput = AndroidAudioOutput(audioSampleRate)
 
         readerThread = Thread(
             { receiveLoop(audioSampleRate, onStatistics, onError) },
@@ -95,16 +67,12 @@ class SoapyRemoteRxSession private constructor(
         var sumSquares = 0.0
         var peak = 0.0
         var intervalStart = System.nanoTime()
-        val demodulator = AmDemodulator(
-            sampleRate = inputSampleRate,
-            cutoffHz = minOf(6_000.0, audioSampleRate * 0.4),
-        )
+        val audioPipeline = AmReceivePipeline(inputSampleRate, audioSampleRate)
         val bytesPerElement = when (streamFormat) {
             "CS16" -> 4
             "CF32" -> 8
             else -> error("Unsupported stream format $streamFormat")
         }
-        var audioPhase = 0.0
 
         try {
             while (running.get()) {
@@ -126,11 +94,8 @@ class SoapyRemoteRxSession private constructor(
                     val payload = ByteArray(payloadBytes)
                     input.readFully(payload)
                     val samples = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
-                    val audio = ShortArray(
-                        kotlin.math.ceil(elements * audioSampleRate / inputSampleRate).toInt() + 1,
-                    )
-                    var audioCount = 0
-                    repeat(elements) {
+                    val iq = FloatArray(elements * 2)
+                    repeat(elements) { index ->
                         val (i, q) = when (streamFormat) {
                             "CS16" -> samples.short.toDouble() / 32768.0 to
                                 samples.short.toDouble() / 32768.0
@@ -141,17 +106,12 @@ class SoapyRemoteRxSession private constructor(
                         val magnitude = sqrt(power)
                         sumSquares += power
                         peak = maxOf(peak, magnitude)
-
-                        val sample = demodulator.process(i, q)
-                        audioPhase += audioSampleRate
-                        if (audioPhase >= inputSampleRate) {
-                            audioPhase -= inputSampleRate
-                            audio[audioCount++] = (sample.coerceIn(-0.95, 0.95) * Short.MAX_VALUE)
-                                .toInt().toShort()
-                        }
+                        iq[index * 2] = i.toFloat()
+                        iq[index * 2 + 1] = q.toFloat()
                     }
-                    val written = audioTrack?.write(audio, 0, audioCount, AudioTrack.WRITE_BLOCKING) ?: -1
-                    check(written >= 0) { "Android audio write failed ($written)" }
+                    val audio = audioPipeline.process(iq, elements)
+                    audioOutput?.write(audio, audio.size)
+                        ?: error("Android audio output is closed")
                     totalSamples += elements
                     intervalSamples += elements
 
@@ -195,10 +155,9 @@ class SoapyRemoteRxSession private constructor(
                 ) { it.int32() }
             }
         }
-        audioTrack?.runCatching { pause(); flush() }
         readerThread?.join(2_000)
-        audioTrack?.runCatching { stop(); release() }
-        audioTrack = null
+        audioOutput?.runCatching { close() }
+        audioOutput = null
         runCatching { transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(streamId)) { it.requireVoid() } }
         runCatching { stream.close() }
         runCatching { status.close() }

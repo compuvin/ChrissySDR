@@ -18,11 +18,11 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 
 ### 0.4 — Soapy and Architecture Foundation
 
-- [ ] Split the current activity into:
+- [x] Split the current activity into:
   - [x] A capability-driven `RadioBackend` interface.
-  - [ ] A SoapyRemote control and streaming implementation.
-  - [ ] Independent DSP/audio pipelines.
-  - [ ] A foreground radio service that owns connections and streams.
+  - [x] A SoapyRemote control and streaming implementation.
+  - [x] Independent DSP/audio pipelines.
+  - [x] A foreground radio service that owns connections and streams.
   - [x] A Compose UI driven by immutable state and events.
 - [ ] Expand discovery for each RX/TX channel to query:
   - [ ] Native stream format and full-scale value.
@@ -68,7 +68,7 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 
 - [ ] Move active RX into a foreground media service with:
   - [ ] Media-style notification showing frequency and mode.
-  - [ ] Stop control.
+  - [x] Stop control.
   - [ ] Audio focus handling.
   - [ ] Headphone/Bluetooth route-change handling.
   - [ ] Reliable cleanup on app removal, service stop, connection loss, or radio error.

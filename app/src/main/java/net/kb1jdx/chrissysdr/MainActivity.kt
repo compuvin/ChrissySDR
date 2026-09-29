@@ -1,9 +1,14 @@
 package com.kb1jdx.chrissysdr
 
 import android.Manifest
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -71,9 +76,39 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kb1jdx.chrissysdr.radio.RadioService
 
 class MainActivity : ComponentActivity() {
     private val radio: RadioViewModel by viewModels()
+    private var serviceBound = false
+    private val radioConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val service = (binder as? RadioService.LocalBinder)?.service ?: return
+            serviceBound = true
+            radio.attachService(service)
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            serviceBound = false
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        bindService(
+            Intent(this, RadioService::class.java),
+            radioConnection,
+            Context.BIND_AUTO_CREATE,
+        )
+    }
+
+    override fun onStop() {
+        if (serviceBound) {
+            unbindService(radioConnection)
+            serviceBound = false
+        }
+        super.onStop()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -94,6 +129,9 @@ class MainActivity : ComponentActivity() {
                     if (granted) radio.discover()
                     else radio.setPermissionMessage("Local-network access was denied")
                 }
+                val notificationPermission = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission(),
+                ) { }
 
                 LaunchedEffect(state.txAvailable) {
                     if (state.txAvailable &&
@@ -101,6 +139,14 @@ class MainActivity : ComponentActivity() {
                         PackageManager.PERMISSION_GRANTED
                     ) {
                         microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                }
+                LaunchedEffect(state.rxAvailable) {
+                    if (state.rxAvailable && Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
                 }
 
