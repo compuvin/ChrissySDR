@@ -25,10 +25,10 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
   - [x] A foreground radio service that owns connections and streams.
   - [x] A Compose UI driven by immutable state and events.
 - [ ] Expand discovery for each RX/TX channel to query:
-  - [ ] Native stream format and full-scale value.
-  - [ ] Available stream formats and stream arguments.
-  - [ ] Discrete sample rates and ranges.
-  - [ ] Frequency and bandwidth ranges.
+  - [x] Native stream format and full-scale value.
+  - [x] Available stream formats and stream arguments.
+  - [x] Discrete sample rates and ranges.
+  - [x] Frequency and bandwidth ranges.
   - [x] Antennas, gain elements/ranges, automatic gain support, and duplex capability.
   - [ ] Driver-defined settings, including their types, ranges/options, and current values.
   - [ ] Device and per-channel sensors, including available SWR and forward-power telemetry.
@@ -40,7 +40,7 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
   - [x] Query the actual applied rate after configuration.
   - [x] Offer only capability-valid rates in an advanced override.
   - [x] For ranged capabilities, generate choices within the reported minimum, maximum, and step.
-- [ ] Select hardware bandwidth automatically as the smallest supported value that contains the requested DSP passband.
+- [x] Select hardware bandwidth automatically as the smallest supported value that contains the requested DSP passband.
 - [ ] Add structured errors, connection state, clean cancellation, reconnection, stream-status handling, and guaranteed device cleanup.
 
 ### 0.5 — Voice Receiver and Spectrum
@@ -101,6 +101,7 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 After safe Soapy TX:
 
 - [ ] Saved frequencies, named stations/channels, and band presets.
+- [ ] Quick QSO log entry for recording a contact on the go; not a replacement for a full logging program.
 - [ ] Waterfall display.
 - [ ] CW receive and additional digital-mode plumbing.
 - [ ] Direct proprietary flex1500d backend behind `RadioBackend`.

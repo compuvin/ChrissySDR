@@ -87,6 +87,18 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     fun setBandwidth(value: String) {
         mutableState.update { it.copy(bandwidth = value) }
         if (mutableState.value.sampleRateAutomatic) updateAutomaticSampleRate()
+        else {
+            val passband = value.toDoubleOrNull()
+            mutableState.update {
+                val available = selectedRxFormat != null && it.sampleRateHz != null &&
+                    passband != null && passband.isFinite() && passband > 0.0 &&
+                    it.sampleRateHz >= passband * 1.25 && hardwareBandwidthAvailable(passband)
+                it.copy(
+                    rxAvailable = available,
+                    rxStatus = if (!available && !it.rxActive) "No supported RX bandwidth or sample rate contains this passband" else it.rxStatus,
+                )
+            }
+        }
     }
 
     fun selectSampleRate(value: Double?) {
@@ -95,7 +107,12 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 sampleRateAutomatic = value == null,
                 sampleRateHz = value ?: it.sampleRateHz,
-                rxAvailable = selectedRxFormat != null && (value ?: it.automaticSampleRateHz) != null,
+                rxAvailable = selectedRxFormat != null && (value ?: it.automaticSampleRateHz) != null &&
+                    it.bandwidth.toDoubleOrNull()?.let { passband ->
+                        passband.isFinite() && passband > 0.0 &&
+                            (value ?: it.automaticSampleRateHz)!! >= passband * 1.25 &&
+                            hardwareBandwidthAvailable(passband)
+                    } == true,
                 appliedSampleRateHz = null,
             )
         }
@@ -197,6 +214,12 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         selectedRxCapabilities = rxCapabilities
         selectedRxFormat = rxCapabilities.supportedFormat()
         val bandwidth = mutableState.value.bandwidth.toDoubleOrNull() ?: DEFAULT_AM_BANDWIDTH
+        val hardwareBandwidth = rxCapabilities?.let {
+            BandwidthPolicy.choose(it.bandwidths, it.bandwidthRanges, bandwidth)
+        }
+        val bandwidthAvailable = rxCapabilities == null ||
+            !BandwidthPolicy.isReported(rxCapabilities.bandwidths, rxCapabilities.bandwidthRanges) ||
+            hardwareBandwidth != null
         val rxRates = rxCapabilities?.let {
             SampleRatePolicy.choose(it.sampleRates, it.sampleRateRanges, bandwidth)
         } ?: SampleRateChoice(null, emptyList())
@@ -243,11 +266,11 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 sampleRateOptions = rxRates.overrideOptions,
                 sampleRateAutomatic = true,
                 appliedSampleRateHz = null,
-                rxAvailable = selectedRxFormat != null && rxRate != null,
-                rxStatus = if (selectedRxFormat != null && rxRate != null) {
-                    "AM RX ready (${selectedRxFormat}, ${formatHz(rxRate)})"
+                rxAvailable = selectedRxFormat != null && rxRate != null && bandwidthAvailable,
+                rxStatus = if (selectedRxFormat != null && rxRate != null && bandwidthAvailable) {
+                    "AM RX ready (${selectedRxFormat}, ${formatHz(rxRate)}; hardware BW ${hardwareBandwidth?.let(::formatHz) ?: "not reported"})"
                 } else {
-                    "AM RX unavailable for the reported capabilities"
+                    "AM RX unavailable: no supported rate or hardware bandwidth contains the passband"
                 },
                 txAvailable = txAvailable,
                 txStatus = txMessage,
@@ -288,14 +311,22 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 sampleRateHz = choice.automaticRate,
                 automaticSampleRateHz = choice.automaticRate,
                 sampleRateOptions = choice.overrideOptions,
-                rxAvailable = selectedRxFormat != null && choice.automaticRate != null,
-                rxStatus = if (choice.automaticRate == null) {
-                    "No reported sample rate can support this RX bandwidth"
+                rxAvailable = selectedRxFormat != null && choice.automaticRate != null &&
+                    hardwareBandwidthAvailable(bandwidth),
+                rxStatus = if (choice.automaticRate == null || !hardwareBandwidthAvailable(bandwidth)) {
+                    "No supported RX bandwidth or sample rate contains this passband"
                 } else if (!it.rxActive) {
                     "AM RX ready (${selectedRxFormat}, ${formatHz(choice.automaticRate)})"
                 } else it.rxStatus,
             )
         }
+    }
+
+    private fun hardwareBandwidthAvailable(passbandHz: Double): Boolean {
+        if (!passbandHz.isFinite() || passbandHz <= 0.0) return false
+        val capabilities = selectedRxCapabilities ?: return false
+        if (!BandwidthPolicy.isReported(capabilities.bandwidths, capabilities.bandwidthRanges)) return true
+        return BandwidthPolicy.choose(capabilities.bandwidths, capabilities.bandwidthRanges, passbandHz) != null
     }
 
     fun startReceiver() {
@@ -311,6 +342,14 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update { it.copy(rxStatus = "Select a device and enter valid RX values") }
             return
         }
+        if (!bandwidth.isFinite() || bandwidth <= 0.0 || !hardwareBandwidthAvailable(bandwidth)) {
+            mutableState.update { it.copy(rxStatus = "No supported hardware bandwidth contains this passband") }
+            return
+        }
+        val capabilities = selectedRxCapabilities ?: return
+        val hardwareBandwidth = BandwidthPolicy.choose(
+            capabilities.bandwidths, capabilities.bandwidthRanges, bandwidth,
+        )
         mutableState.update { it.copy(rxBusy = true, rxStatus = "Opening RX stream…") }
         worker.execute {
             val service = radioService
@@ -327,6 +366,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         deviceArguments = device,
                         frequencyHz = frequency,
                         bandwidthHz = bandwidth,
+                        hardwareBandwidthHz = hardwareBandwidth,
                         sampleRate = sampleRate,
                         format = format,
                     ),
@@ -510,8 +550,12 @@ private fun formatDeviceInfo(info: RadioDeviceCapabilities) = buildString {
     append("Driver: ${info.driverKey}")
     append("\nHardware: ${info.hardwareKey}")
     append("\nRX channels: ${info.rxChannels} • TX channels: ${info.txChannels}")
-    info.rx?.let { append(formatCapabilities("RX 0", it)) }
-    info.tx?.let { append(formatCapabilities("TX 0", it)) }
+    info.allRx.forEachIndexed { channel, capabilities ->
+        append(formatCapabilities("RX $channel", capabilities))
+    }
+    info.allTx.forEachIndexed { channel, capabilities ->
+        append(formatCapabilities("TX $channel", capabilities))
+    }
     if (info.metadata.isNotEmpty()) {
         append("\n\nHardware information")
         info.metadata.forEach { (key, value) -> append("\n$key: $value") }
@@ -521,6 +565,19 @@ private fun formatDeviceInfo(info: RadioDeviceCapabilities) = buildString {
 private fun formatCapabilities(label: String, capabilities: RadioChannelCapabilities) = buildString {
     append("\n\n$label capabilities")
     append("\nFormats: ${capabilities.formats.display()}")
+    append("\nNative format: ${capabilities.nativeFormat ?: "not reported"}")
+    capabilities.nativeFullScale?.let { append(" (full scale $it)") }
+    append("\nStream arguments: ${if (capabilities.streamArgs.isEmpty()) "none reported" else ""}")
+    capabilities.streamArgs.forEach { arg ->
+        val type = listOf("boolean", "integer", "float", "string").getOrNull(arg.type)
+            ?: "type ${arg.type}"
+        append("\n  ${arg.key}: $type")
+        if (arg.options.isNotEmpty()) append("; options ${arg.options.joinToString()}")
+        else if (arg.range.maximum > arg.range.minimum) {
+            append("; range ${arg.range.minimum}–${arg.range.maximum}")
+        }
+        if (arg.value.isNotEmpty()) append("; default ${arg.value}")
+    }
     append("\nAntennas: ${capabilities.antennas.display()}")
     append("\nGain controls: ${capabilities.gains.joinToString().ifEmpty { "not reported" }}")
     capabilities.gainRanges.forEach { (name, range) ->

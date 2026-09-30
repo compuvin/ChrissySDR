@@ -6,10 +6,12 @@ import kotlin.math.ceil
 class AmReceivePipeline(
     private val inputSampleRate: Double,
     private val outputSampleRate: Int,
+    private val passbandHz: Double = 12_000.0,
 ) {
+    init { require(passbandHz.isFinite() && passbandHz > 0.0) }
     private val demodulator = AmDemodulator(
         sampleRate = inputSampleRate,
-        cutoffHz = minOf(6_000.0, outputSampleRate * 0.4),
+        cutoffHz = minOf(passbandHz / 2.0, outputSampleRate * 0.4, inputSampleRate * 0.4),
     )
     private var outputPhase = 0.0
 

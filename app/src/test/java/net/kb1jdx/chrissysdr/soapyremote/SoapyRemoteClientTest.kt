@@ -21,13 +21,14 @@ class SoapyRemoteClientTest {
         ServerSocket(0).use { server ->
             val executor = Executors.newSingleThreadExecutor()
             val calls = mutableListOf<Int>()
+            val queriedChannels = mutableListOf<Pair<Int, Int>>()
             val future = executor.submit {
                 server.accept().use { socket ->
                     fun reply(writer: SoapyRpcWriter) {
                         socket.getOutputStream().write(writer.frame().encode())
                         socket.getOutputStream().flush()
                     }
-                    repeat(29) {
+                    repeat(45) {
                         val reader = SoapyRpcReader(SoapyRpcFrame.readFrom(socket.getInputStream()).payload)
                         val call = reader.call()
                         calls += call
@@ -41,20 +42,41 @@ class SoapyRemoteClientTest {
                                 val direction = reader.char()
                                 reply(SoapyRpcWriter().int32(if (direction == 1) 2 else 1))
                             }
+                            305 -> {
+                                val direction = reader.char()
+                                val channel = reader.int32()
+                                queriedChannels += direction to channel
+                                reply(SoapyRpcWriter().string(if (channel == 1) "CF32" else "CS16")
+                                    .float64(if (channel == 1) 1.0 else 32768.0))
+                            }
+                            306 -> {
+                                val direction = reader.char()
+                                val channel = reader.int32()
+                                queriedChannels += direction to channel
+                                reply(SoapyRpcWriter().argInfoList(
+                                    if (direction == 1 && channel == 0) listOf(
+                                        SoapyArgInfo(
+                                            "WIRE", "CS16", "Wire format", "Sample transport format", "",
+                                            3, SoapyRange(0.0, 0.0, 0.0), listOf("CS16", "CF32"),
+                                            listOf("16-bit", "32-bit"),
+                                        ),
+                                    ) else emptyList(),
+                                ))
+                            }
                             304, 500, 700 -> {
-                                reader.char(); reader.int32()
+                                queriedChannels += reader.char() to reader.int32()
                                 reply(SoapyRpcWriter().emptyStringList())
                             }
                             805, 906, 907 -> {
-                                reader.char(); reader.int32()
+                                queriedChannels += reader.char() to reader.int32()
                                 reply(SoapyRpcWriter().emptyRangeList())
                             }
                             902, 905 -> {
-                                reader.char(); reader.int32()
+                                queriedChannels += reader.char() to reader.int32()
                                 reply(SoapyRpcWriter().emptyFloat64List())
                             }
                             203, 709 -> {
-                                reader.char(); reader.int32()
+                                queriedChannels += reader.char() to reader.int32()
                                 reply(SoapyRpcWriter().bool(false))
                             }
                             2, 3 -> reply(SoapyRpcWriter().voidValue())
@@ -77,10 +99,24 @@ class SoapyRemoteClientTest {
             assertEquals(mapOf("serial" to "123"), info.hardwareInfo)
             assertEquals(2, info.rxChannels)
             assertEquals(1, info.txChannels)
+            assertEquals(2, info.allRxCapabilities.size)
+            assertEquals(1, info.allTxCapabilities.size)
+            assertEquals("CS16", info.allRxCapabilities[0].nativeFormat)
+            assertEquals(32768.0, info.allRxCapabilities[0].nativeFullScale)
+            assertEquals("CF32", info.allRxCapabilities[1].nativeFormat)
+            assertEquals(1.0, info.allRxCapabilities[1].nativeFullScale)
+            assertEquals("WIRE", info.allRxCapabilities[0].streamArgs.single().key)
+            assertEquals(listOf("CS16", "CF32"), info.allRxCapabilities[0].streamArgs.single().options)
+            assertEquals(listOf("16-bit", "32-bit"), info.allRxCapabilities[0].streamArgs.single().optionNames)
+            assertEquals(
+                listOf(1 to 0, 1 to 1, 0 to 0),
+                queriedChannels.chunked(12).map { chunk -> chunk.first() },
+            )
             assertEquals(
                 listOf(20, 1, 100, 101, 102, 202, 202) +
-                    listOf(700, 304, 500, 709, 203, 805, 902, 907, 905, 906) +
-                    listOf(700, 304, 500, 709, 203, 805, 902, 907, 905, 906) +
+                    listOf(700, 305, 304, 306, 500, 709, 203, 805, 902, 907, 905, 906) +
+                    listOf(700, 305, 304, 306, 500, 709, 203, 805, 902, 907, 905, 906) +
+                    listOf(700, 305, 304, 306, 500, 709, 203, 805, 902, 907, 905, 906) +
                     listOf(2, 3),
                 calls,
             )

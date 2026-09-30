@@ -12,6 +12,15 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-09-29 — Native stream discovery regression
+
+- **App version:** `0.3.0-beta.1` debug build with discovery changes.
+- **Scope:** Per-channel native stream format, full-scale value, and stream-argument
+  discovery through SoapyRemote, alongside recent bandwidth selection changes.
+- **Result:** The operator installed the updated app and reported that it tested
+  fine. No specific capability values or stream-argument contents were recorded.
+- **Automated result:** Unit tests and debug APK assembly passed.
+
 ## 2026-09-28 — Service and pipeline receiver regression
 
 - **App version:** `0.3.0-dev.14`

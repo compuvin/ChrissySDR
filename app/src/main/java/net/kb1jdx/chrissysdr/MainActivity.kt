@@ -529,7 +529,7 @@ private fun SettingsSheet(
                 value = state.bandwidth,
                 onValueChange = onBandwidthChanged,
                 modifier = Modifier.weight(1f),
-                label = { Text("RX bandwidth") },
+                label = { Text("AM passband (Hz)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
             )

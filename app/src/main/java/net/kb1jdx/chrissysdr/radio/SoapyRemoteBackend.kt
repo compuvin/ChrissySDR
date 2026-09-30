@@ -34,6 +34,8 @@ class SoapyRemoteBackend(
             txChannels = info.txChannels,
             rx = info.rxCapabilities?.toRadioCapabilities(),
             tx = info.txCapabilities?.toRadioCapabilities(),
+            allRx = info.allRxCapabilities.map { it.toRadioCapabilities() },
+            allTx = info.allTxCapabilities.map { it.toRadioCapabilities() },
         )
     }
 
@@ -44,6 +46,7 @@ class SoapyRemoteBackend(
             config.deviceArguments,
             config.frequencyHz,
             config.bandwidthHz,
+            config.hardwareBandwidthHz,
             config.sampleRate,
             config.format,
         )
@@ -108,6 +111,21 @@ class SoapyRemoteBackend(
 
 private fun SoapyChannelCapabilities.toRadioCapabilities() = RadioChannelCapabilities(
     formats = formats,
+    nativeFormat = nativeFormat,
+    nativeFullScale = nativeFullScale,
+    streamArgs = streamArgs.map { arg ->
+        RadioArgumentInfo(
+            key = arg.key,
+            value = arg.value,
+            name = arg.name,
+            description = arg.description,
+            units = arg.units,
+            type = arg.type,
+            range = RadioRange(arg.range.minimum, arg.range.maximum, arg.range.step),
+            options = arg.options,
+            optionNames = arg.optionNames,
+        )
+    },
     antennas = antennas,
     gains = gains,
     gainRanges = gainRanges.mapValues { (_, range) ->

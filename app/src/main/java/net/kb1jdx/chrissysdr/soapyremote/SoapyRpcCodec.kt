@@ -7,10 +7,23 @@ import java.io.DataOutputStream
 
 internal enum class RpcType(val id: Int) {
     CHAR(0), BOOL(1), INT32(2), INT64(3), FLOAT64(4), STRING(6), RANGE(7), RANGE_LIST(8),
-    STRING_LIST(9), FLOAT64_LIST(10), KWARGS(11), KWARGS_LIST(12), EXCEPTION(13), VOID(14), CALL(15)
+    STRING_LIST(9), FLOAT64_LIST(10), KWARGS(11), KWARGS_LIST(12), EXCEPTION(13), VOID(14), CALL(15),
+    ARG_INFO(17), ARG_INFO_LIST(18)
 }
 
 data class SoapyRange(val minimum: Double, val maximum: Double, val step: Double)
+
+data class SoapyArgInfo(
+    val key: String,
+    val value: String,
+    val name: String,
+    val description: String,
+    val units: String,
+    val type: Int,
+    val range: SoapyRange,
+    val options: List<String>,
+    val optionNames: List<String>,
+)
 
 class SoapyRpcWriter {
     private val bytes = ByteArrayOutputStream()
@@ -51,6 +64,28 @@ class SoapyRpcWriter {
     fun emptyStringList() = apply { type(RpcType.STRING_LIST); int32(0) }
     fun emptyFloat64List() = apply { type(RpcType.FLOAT64_LIST); int32(0) }
     fun emptyRangeList() = apply { type(RpcType.RANGE_LIST); int32(0) }
+    fun argInfo(value: SoapyArgInfo) = apply {
+        type(RpcType.ARG_INFO)
+        string(value.key).string(value.value).string(value.name)
+            .string(value.description).string(value.units).int32(value.type)
+        range(value.range)
+        stringList(value.options)
+        stringList(value.optionNames)
+    }
+    fun argInfoList(values: List<SoapyArgInfo>) = apply {
+        type(RpcType.ARG_INFO_LIST)
+        int32(values.size)
+        values.forEach { argInfo(it) }
+    }
+    fun range(value: SoapyRange) = apply {
+        type(RpcType.RANGE)
+        float64(value.minimum).float64(value.maximum).float64(value.step)
+    }
+    fun stringList(values: List<String>) = apply {
+        type(RpcType.STRING_LIST)
+        int32(values.size)
+        values.forEach { string(it) }
+    }
     fun sizeList(values: List<Int>) = apply {
         output.writeByte(16)
         int32(values.size)
@@ -117,6 +152,28 @@ class SoapyRpcReader(payload: ByteArray) {
     fun range(): SoapyRange {
         expect(RpcType.RANGE)
         return SoapyRange(float64(), float64(), float64())
+    }
+
+    fun argInfoList(): List<SoapyArgInfo> {
+        expect(RpcType.ARG_INFO_LIST)
+        val count = int32()
+        require(count >= 0) { "Invalid argument-info list size $count" }
+        return List(count) { argInfo() }
+    }
+
+    fun argInfo(): SoapyArgInfo {
+        expect(RpcType.ARG_INFO)
+        return SoapyArgInfo(
+            key = string(),
+            value = string(),
+            name = string(),
+            description = string(),
+            units = string(),
+            type = int32(),
+            range = range(),
+            options = stringList(),
+            optionNames = stringList(),
+        )
     }
 
     fun float64(): Double {

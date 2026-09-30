@@ -13,10 +13,15 @@ data class SoapyRemoteDeviceInfo(
     val txChannels: Int,
     val rxCapabilities: SoapyChannelCapabilities?,
     val txCapabilities: SoapyChannelCapabilities?,
+    val allRxCapabilities: List<SoapyChannelCapabilities> = listOfNotNull(rxCapabilities),
+    val allTxCapabilities: List<SoapyChannelCapabilities> = listOfNotNull(txCapabilities),
 )
 
 data class SoapyChannelCapabilities(
     val formats: List<String>,
+    val nativeFormat: String?,
+    val nativeFullScale: Double?,
+    val streamArgs: List<SoapyArgInfo>,
     val antennas: List<String>,
     val gains: List<String>,
     val gainRanges: Map<String, SoapyRange>,
@@ -65,10 +70,12 @@ class SoapyRemoteClient(
                 val info = transact(socket, SoapyRpcWriter().call(GET_HARDWARE_INFO)) { it.kwargs() }
                 val rx = getNumChannels(socket, RX)
                 val tx = getNumChannels(socket, TX)
-                val rxCapabilities = if (rx > 0) getCapabilities(socket, RX) else null
-                val txCapabilities = if (tx > 0) getCapabilities(socket, TX) else null
+                val allRxCapabilities = (0 until rx).map { getCapabilities(socket, RX, it) }
+                val allTxCapabilities = (0 until tx).map { getCapabilities(socket, TX, it) }
                 return SoapyRemoteDeviceInfo(
-                    driver, hardware, info, rx, tx, rxCapabilities, txCapabilities,
+                    driver, hardware, info, rx, tx,
+                    allRxCapabilities.firstOrNull(), allTxCapabilities.firstOrNull(),
+                    allRxCapabilities, allTxCapabilities,
                 )
             } finally {
                 runCatching {
@@ -84,8 +91,8 @@ class SoapyRemoteClient(
         SoapyRpcWriter().call(GET_NUM_CHANNELS).char(direction),
     ) { it.int32() }
 
-    private fun getCapabilities(socket: Socket, direction: Int): SoapyChannelCapabilities {
-        fun request(call: Int) = SoapyRpcWriter().call(call).char(direction).int32(0)
+    private fun getCapabilities(socket: Socket, direction: Int, channel: Int): SoapyChannelCapabilities {
+        fun request(call: Int) = SoapyRpcWriter().call(call).char(direction).int32(channel)
         val notReported = linkedSetOf<String>()
         fun <T> optional(label: String, fallback: T, query: () -> T): T = try {
             query()
@@ -102,8 +109,18 @@ class SoapyRemoteClient(
                 transact(socket, request(GET_GAIN_ELEMENT_RANGE).string(name)) { it.range() }
             }?.let { name to it }
         }.toMap()
+        val nativeFormat = optional("native stream format and full scale", null) {
+            transact(socket, request(GET_NATIVE_STREAM_FORMAT)) { reader ->
+                reader.string() to reader.float64()
+            }
+        }
         return SoapyChannelCapabilities(
             formats = transact(socket, request(GET_STREAM_FORMATS)) { it.stringList() },
+            nativeFormat = nativeFormat?.first,
+            nativeFullScale = nativeFormat?.second,
+            streamArgs = optional("stream arguments", emptyList()) {
+                transact(socket, request(GET_STREAM_ARGS_INFO)) { it.argInfoList() }
+            },
             antennas = optional("antennas", emptyList()) {
                 transact(socket, request(LIST_ANTENNAS)) { it.stringList() }
             },
@@ -152,6 +169,8 @@ class SoapyRemoteClient(
         private const val GET_NUM_CHANNELS = 202
         private const val GET_FULL_DUPLEX = 203
         private const val GET_STREAM_FORMATS = 304
+        private const val GET_NATIVE_STREAM_FORMAT = 305
+        private const val GET_STREAM_ARGS_INFO = 306
         private const val LIST_ANTENNAS = 500
         private const val LIST_GAINS = 700
         private const val GET_GAIN_ELEMENT_RANGE = 708

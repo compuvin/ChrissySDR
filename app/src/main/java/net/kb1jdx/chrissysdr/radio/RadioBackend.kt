@@ -16,8 +16,23 @@ data class RadioDiscovery(
 
 data class RadioRange(val minimum: Double, val maximum: Double, val step: Double)
 
+data class RadioArgumentInfo(
+    val key: String,
+    val value: String,
+    val name: String,
+    val description: String,
+    val units: String,
+    val type: Int,
+    val range: RadioRange,
+    val options: List<String>,
+    val optionNames: List<String>,
+)
+
 data class RadioChannelCapabilities(
     val formats: List<String>,
+    val nativeFormat: String?,
+    val nativeFullScale: Double?,
+    val streamArgs: List<RadioArgumentInfo>,
     val antennas: List<String>,
     val gains: List<String>,
     val gainRanges: Map<String, RadioRange>,
@@ -39,6 +54,8 @@ data class RadioDeviceCapabilities(
     val txChannels: Int,
     val rx: RadioChannelCapabilities?,
     val tx: RadioChannelCapabilities?,
+    val allRx: List<RadioChannelCapabilities> = listOfNotNull(rx),
+    val allTx: List<RadioChannelCapabilities> = listOfNotNull(tx),
 )
 
 data class ReceiverConfig(
@@ -46,6 +63,7 @@ data class ReceiverConfig(
     val deviceArguments: Map<String, String>,
     val frequencyHz: Double,
     val bandwidthHz: Double,
+    val hardwareBandwidthHz: Double?,
     val sampleRate: Double,
     val format: String,
 )

@@ -28,6 +28,7 @@ class SoapyRemoteRxSession private constructor(
     private val streamId: Int,
     val inputSampleRate: Double,
     private val streamFormat: String,
+    private val passbandHz: Double,
 ) : AutoCloseable {
     private val running = AtomicBoolean(false)
     private var readerThread: Thread? = null
@@ -67,7 +68,7 @@ class SoapyRemoteRxSession private constructor(
         var sumSquares = 0.0
         var peak = 0.0
         var intervalStart = System.nanoTime()
-        val audioPipeline = AmReceivePipeline(inputSampleRate, audioSampleRate)
+        val audioPipeline = AmReceivePipeline(inputSampleRate, audioSampleRate, passbandHz)
         val bytesPerElement = when (streamFormat) {
             "CS16" -> 4
             "CF32" -> 8
@@ -199,10 +200,12 @@ class SoapyRemoteRxSession private constructor(
             deviceArgs: Map<String, String>,
             frequencyHz: Double,
             bandwidthHz: Double,
+            hardwareBandwidthHz: Double?,
             sampleRate: Double,
             format: String,
         ): SoapyRemoteRxSession {
             require(sampleRate >= MIN_AUDIO_SAMPLE_RATE) { "Sample rate must be at least 8000 Hz" }
+            require(bandwidthHz.isFinite() && bandwidthHz > 0.0) { "Passband must be positive" }
             require(format == "CS16" || format == "CF32") {
                 "This receiver currently supports CS16 or CF32 streams, not $format"
             }
@@ -227,9 +230,11 @@ class SoapyRemoteRxSession private constructor(
                     SoapyRpcWriter().call(SET_FREQUENCY).char(RX).int32(0)
                         .float64(frequencyHz).kwargs(emptyMap()),
                 ) { it.requireVoid() }
-                transact(
-                    SoapyRpcWriter().call(SET_BANDWIDTH).char(RX).int32(0).float64(bandwidthHz),
-                ) { it.requireVoid() }
+                hardwareBandwidthHz?.let { hardwareBandwidth ->
+                    transact(
+                        SoapyRpcWriter().call(SET_BANDWIDTH).char(RX).int32(0).float64(hardwareBandwidth),
+                    ) { it.requireVoid() }
+                }
                 val appliedSampleRate = transact(
                     SoapyRpcWriter().call(GET_SAMPLE_RATE).char(RX).int32(0),
                 ) { it.float64() }
@@ -269,7 +274,7 @@ class SoapyRemoteRxSession private constructor(
                 setupReply.string() // repeated server port
                 sendAck(stream!!.getOutputStream(), 0, FLOW_WINDOW_PACKETS)
                 return SoapyRemoteRxSession(
-                    control, stream!!, status!!, streamId, appliedSampleRate, format,
+                    control, stream!!, status!!, streamId, appliedSampleRate, format, bandwidthHz,
                 )
             } catch (error: Throwable) {
                 runCatching { stream?.close() }
