@@ -66,6 +66,7 @@ data class ReceiverConfig(
     val hardwareBandwidthHz: Double?,
     val sampleRate: Double,
     val format: String,
+    val fullScale: Double,
 )
 
 data class TransmitterConfig(
@@ -74,6 +75,7 @@ data class TransmitterConfig(
     val frequencyHz: Double,
     val sampleRate: Double,
     val format: String,
+    val fullScale: Double,
 )
 
 data class ReceiverStatistics(

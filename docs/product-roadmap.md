@@ -33,8 +33,8 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
   - [ ] Driver-defined settings, including their types, ranges/options, and current values.
   - [ ] Device and per-channel sensors, including available SWR and forward-power telemetry.
 - [ ] Follow the upstream Soapy APIs for [native stream format/full-scale negotiation](https://github.com/pothosware/SoapySDR/blob/master/include/SoapySDR/Device.hpp) and [SoapyRemote capability calls](https://github.com/pothosware/SoapyRemote/blob/master/common/SoapyRemoteDefs.hpp).
-- [ ] Support `CS8`, `CS16`, and `CF32` decoding with format-specific byte order and full-scale conversion.
-- [ ] Prefer a supported native format when efficient; otherwise prefer `CS16`, then `CF32`, then `CS8`.
+- [x] Support `CS8`, `CS16`, and `CF32` decoding with format-specific byte order and full-scale conversion.
+- [x] Prefer a supported native format when efficient; otherwise prefer `CS16`, then `CF32`, then `CS8`.
 - [x] Replace free-form sample-rate entry:
   - [x] Automatically select the lowest advertised rate sufficient for the active mode and filter.
   - [x] Query the actual applied rate after configuration.

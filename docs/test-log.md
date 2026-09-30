@@ -12,6 +12,16 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-09-29 — Stream-format RX regression
+
+- **App version:** `0.3.0-beta.1` debug build with new I/Q format handling.
+- **Radio:** FLEX-1500 via flex1500d over SoapyRemote on the LAN.
+- **Scope:** RX after adding `CS8`/`CS16`/`CF32` decoding, full-scale conversion,
+  and capability-driven format selection.
+- **Result:** Successful according to the operator. The app selected `CS16` for
+  RX and receive audio sounded roughly as before.
+- **Not tested:** TX and RX on a device selecting `CS8` or `CF32`.
+
 ## 2026-09-29 — Native stream discovery regression
 
 - **App version:** `0.3.0-beta.1` debug build with discovery changes.

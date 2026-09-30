@@ -56,9 +56,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
 
     private var selectedPort = RadioEndpoint.DEFAULT_PORT
     private var selectedDevice: Map<String, String>? = null
-    private var selectedRxFormat: String? = null
+    private var selectedRxFormat: StreamFormatChoice? = null
     private var selectedRxCapabilities: RadioChannelCapabilities? = null
-    private var selectedTxFormat: String? = null
+    private var selectedTxFormat: StreamFormatChoice? = null
     private var selectedTxSampleRate: Double? = null
     private var selectedTxCapabilities: RadioChannelCapabilities? = null
     private var selectedRadioPreferenceKey: String? = null
@@ -249,11 +249,11 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             !stationOwner -> "AM TX unavailable: this client is not the station owner"
             !transmitEnabled -> "AM TX unavailable: transmit is disabled by the radio server"
             txCapabilities == null -> "AM TX unavailable: no TX channel"
-            selectedTxFormat == null -> "AM TX unavailable: no CS16 or CF32 stream"
+            selectedTxFormat == null -> "AM TX unavailable: no supported stream format"
             selectedTxSampleRate == null -> "AM TX unavailable: no usable TX sample rate"
             txRangesUnreported && !allowUnknownTxRange ->
                 "AM TX disabled: the radio did not report TX frequency limits"
-            else -> "AM TX ready (${selectedTxFormat}, ${formatHz(selectedTxSampleRate!!)})"
+            else -> "AM TX ready (${selectedTxFormat!!.format}, ${formatHz(selectedTxSampleRate!!)})"
         }
         mutableState.update {
             it.copy(
@@ -268,7 +268,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 appliedSampleRateHz = null,
                 rxAvailable = selectedRxFormat != null && rxRate != null && bandwidthAvailable,
                 rxStatus = if (selectedRxFormat != null && rxRate != null && bandwidthAvailable) {
-                    "AM RX ready (${selectedRxFormat}, ${formatHz(rxRate)}; hardware BW ${hardwareBandwidth?.let(::formatHz) ?: "not reported"})"
+                    "AM RX ready (${selectedRxFormat!!.format}, ${formatHz(rxRate)}; hardware BW ${hardwareBandwidth?.let(::formatHz) ?: "not reported"})"
                 } else {
                     "AM RX unavailable: no supported rate or hardware bandwidth contains the passband"
                 },
@@ -316,7 +316,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 rxStatus = if (choice.automaticRate == null || !hardwareBandwidthAvailable(bandwidth)) {
                     "No supported RX bandwidth or sample rate contains this passband"
                 } else if (!it.rxActive) {
-                    "AM RX ready (${selectedRxFormat}, ${formatHz(choice.automaticRate)})"
+                    "AM RX ready (${selectedRxFormat!!.format}, ${formatHz(choice.automaticRate)})"
                 } else it.rxStatus,
             )
         }
@@ -368,7 +368,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         bandwidthHz = bandwidth,
                         hardwareBandwidthHz = hardwareBandwidth,
                         sampleRate = sampleRate,
-                        format = format,
+                        format = format.format,
+                        fullScale = format.fullScale,
                     ),
                     onStatistics = { stats ->
                         mutableState.update {
@@ -470,7 +471,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         deviceArguments = device,
                         frequencyHz = frequency,
                         sampleRate = sampleRate,
-                        format = format,
+                        format = format.format,
+                        fullScale = format.fullScale,
                     ),
                     onStatistics = { stats ->
                         mutableState.update {
@@ -539,11 +541,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
-private fun RadioChannelCapabilities?.supportedFormat(): String? = when {
-    this == null -> null
-    "CS16" in formats -> "CS16"
-    "CF32" in formats -> "CF32"
-    else -> null
+private fun RadioChannelCapabilities?.supportedFormat(): StreamFormatChoice? = this?.let {
+    StreamFormatPolicy.choose(it.formats, it.nativeFormat, it.nativeFullScale)
 }
 
 private fun formatDeviceInfo(info: RadioDeviceCapabilities) = buildString {

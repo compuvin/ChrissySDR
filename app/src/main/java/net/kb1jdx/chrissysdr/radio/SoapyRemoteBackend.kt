@@ -49,6 +49,7 @@ class SoapyRemoteBackend(
             config.hardwareBandwidthHz,
             config.sampleRate,
             config.format,
+            config.fullScale,
         )
         return object : RadioReceiver {
             override val appliedSampleRate = session.inputSampleRate
@@ -82,6 +83,7 @@ class SoapyRemoteBackend(
             config.frequencyHz,
             config.sampleRate,
             config.format,
+            config.fullScale,
         )
         return object : RadioTransmitter {
             override val appliedSampleRate = session.outputSampleRate

@@ -28,8 +28,10 @@ class SoapyRemoteRxSession private constructor(
     private val streamId: Int,
     val inputSampleRate: Double,
     private val streamFormat: String,
+    private val fullScale: Double,
     private val passbandHz: Double,
 ) : AutoCloseable {
+    private val sampleCodec = IqSampleCodec(streamFormat, fullScale)
     private val running = AtomicBoolean(false)
     private var readerThread: Thread? = null
     @Volatile private var audioOutput: AndroidAudioOutput? = null
@@ -69,11 +71,7 @@ class SoapyRemoteRxSession private constructor(
         var peak = 0.0
         var intervalStart = System.nanoTime()
         val audioPipeline = AmReceivePipeline(inputSampleRate, audioSampleRate, passbandHz)
-        val bytesPerElement = when (streamFormat) {
-            "CS16" -> 4
-            "CF32" -> 8
-            else -> error("Unsupported stream format $streamFormat")
-        }
+        val bytesPerElement = sampleCodec.bytesPerElement
 
         try {
             while (running.get()) {
@@ -94,21 +92,15 @@ class SoapyRemoteRxSession private constructor(
 
                     val payload = ByteArray(payloadBytes)
                     input.readFully(payload)
-                    val samples = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
                     val iq = FloatArray(elements * 2)
+                    sampleCodec.decode(payload, elements, iq)
                     repeat(elements) { index ->
-                        val (i, q) = when (streamFormat) {
-                            "CS16" -> samples.short.toDouble() / 32768.0 to
-                                samples.short.toDouble() / 32768.0
-                            "CF32" -> samples.float.toDouble() to samples.float.toDouble()
-                            else -> error("Unsupported stream format $streamFormat")
-                        }
+                        val i = iq[index * 2].toDouble()
+                        val q = iq[index * 2 + 1].toDouble()
                         val power = i * i + q * q
                         val magnitude = sqrt(power)
                         sumSquares += power
                         peak = maxOf(peak, magnitude)
-                        iq[index * 2] = i.toFloat()
-                        iq[index * 2 + 1] = q.toFloat()
                     }
                     val audio = audioPipeline.process(iq, elements)
                     audioOutput?.write(audio, audio.size)
@@ -203,12 +195,11 @@ class SoapyRemoteRxSession private constructor(
             hardwareBandwidthHz: Double?,
             sampleRate: Double,
             format: String,
+            fullScale: Double,
         ): SoapyRemoteRxSession {
             require(sampleRate >= MIN_AUDIO_SAMPLE_RATE) { "Sample rate must be at least 8000 Hz" }
             require(bandwidthHz.isFinite() && bandwidthHz > 0.0) { "Passband must be positive" }
-            require(format == "CS16" || format == "CF32") {
-                "This receiver currently supports CS16 or CF32 streams, not $format"
-            }
+            IqSampleCodec(format, fullScale)
             val control = Socket()
             var stream: Socket? = null
             var status: Socket? = null
@@ -274,7 +265,8 @@ class SoapyRemoteRxSession private constructor(
                 setupReply.string() // repeated server port
                 sendAck(stream!!.getOutputStream(), 0, FLOW_WINDOW_PACKETS)
                 return SoapyRemoteRxSession(
-                    control, stream!!, status!!, streamId, appliedSampleRate, format, bandwidthHz,
+                    control, stream!!, status!!, streamId, appliedSampleRate, format, fullScale,
+                    bandwidthHz,
                 )
             } catch (error: Throwable) {
                 runCatching { stream?.close() }

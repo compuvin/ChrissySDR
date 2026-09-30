@@ -24,7 +24,9 @@ class SoapyRemoteTxSession private constructor(
     private val streamId: Int,
     val outputSampleRate: Double,
     private val streamFormat: String,
+    private val fullScale: Double,
 ) : AutoCloseable {
+    private val sampleCodec = IqSampleCodec(streamFormat, fullScale)
     private val running = AtomicBoolean(false)
     private var writerThread: Thread? = null
     @Volatile private var microphoneInput: AndroidMicrophoneInput? = null
@@ -60,7 +62,7 @@ class SoapyRemoteTxSession private constructor(
         val input = DataInputStream(stream.getInputStream())
         val output = stream.getOutputStream()
         val microphone = microphoneInput ?: return
-        val bytesPerElement = if (streamFormat == "CS16") 4 else 8
+        val bytesPerElement = sampleCodec.bytesPerElement
         val maximumElements = (STREAM_TRANSFER_BYTES - STREAM_HEADER_BYTES) / bytesPerElement
         val audio = ShortArray(1_024)
         val audioPipeline = AmTransmitPipeline(MICROPHONE_SAMPLE_RATE, outputSampleRate)
@@ -97,19 +99,9 @@ class SoapyRemoteTxSession private constructor(
                 while (iqIndex < iq.size && running.get()) {
                     val packet = ByteBuffer.allocate(STREAM_TRANSFER_BYTES).order(ByteOrder.BIG_ENDIAN)
                     packet.position(STREAM_HEADER_BYTES)
-                    packet.order(ByteOrder.LITTLE_ENDIAN)
                     val elements = minOf(maximumElements, (iq.size - iqIndex) / 2)
-                    repeat(elements) {
-                        val i = iq[iqIndex++]
-                        val q = iq[iqIndex++]
-                        if (streamFormat == "CS16") {
-                            packet.putShort((i.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort())
-                            packet.putShort((q.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort())
-                        } else {
-                            packet.putFloat(i)
-                            packet.putFloat(q)
-                        }
-                    }
+                    sampleCodec.encode(iq, iqIndex, elements, packet)
+                    iqIndex += elements * 2
 
                     while (sequence - acknowledgedSequence >= flowWindow) {
                         val ack = readHeader(input)
@@ -232,11 +224,10 @@ class SoapyRemoteTxSession private constructor(
             frequencyHz: Double,
             sampleRate: Double,
             format: String,
+            fullScale: Double,
         ): SoapyRemoteTxSession {
             require(sampleRate >= 8_000) { "TX sample rate must be at least 8000 Hz" }
-            require(format == "CS16" || format == "CF32") {
-                "This transmitter currently supports CS16 or CF32 streams, not $format"
-            }
+            IqSampleCodec(format, fullScale)
             val control = Socket()
             var stream: Socket? = null
             var status: Socket? = null
@@ -295,7 +286,7 @@ class SoapyRemoteTxSession private constructor(
                 val streamId = setupReply.int32()
                 setupReply.string()
                 return SoapyRemoteTxSession(
-                    control, stream!!, status!!, streamId, appliedSampleRate, format,
+                    control, stream!!, status!!, streamId, appliedSampleRate, format, fullScale,
                 )
             } catch (error: Throwable) {
                 runCatching { stream?.close() }
