@@ -1,9 +1,9 @@
 # ChrissySDR
 
 ChrissySDR is an open-source Android radio client designed specifically for
-licensed amateur-radio operators. Its primary purpose is to provide safe,
-convenient receive and transmit operation from an Android device while the app
-and radio server are connected to the same local-area network (LAN).
+licensed amateur-radio operators. Its goal is to provide safe, convenient
+receive and transmit operation from an Android device while the app and radio
+server are connected to the same local-area network (LAN).
 
 The first radio interface is built around
 [SoapyRemote](https://github.com/pothosware/SoapyRemote), allowing an Android
@@ -25,13 +25,15 @@ license and local regulations.
 
 ChrissySDR is under active development and is not ready for general use.
 
-The current development build can:
+The current `0.4.0` development build can:
 
 - Connect to a SoapyRemote server.
 - Discover and inspect attached Soapy devices.
 - Display RX and TX capabilities, driver settings, and sensor snapshots
   reported by the radio.
 - Open an RX stream using `CS8`, `CS16`, or `CF32` samples.
+- Select a radio-supported RX sample rate and hardware bandwidth, and retry a
+  previously established RX stream after a connection interruption.
 - Play an experimental AM receive stream through Android audio.
 - Send a confirmation-gated, 30-second experimental AM microphone transmission
   on radios that report compatible TX capabilities.
@@ -39,8 +41,13 @@ The current development build can:
 
 Transmit is the central long-term purpose of ChrissySDR. The current AM transmit
 path is an early controlled test facility, not a production-ready transmitter.
-Additional capability negotiation, LAN connection handling, safety mechanisms,
-and on-air validation remain under development.
+Additional operating controls, TX safety mechanisms, and on-air validation
+remain under development. Driver settings are currently read-only, and sensor
+values are snapshots taken during device inspection rather than live meters.
+
+The [GitHub Releases](https://github.com/compuvin/ChrissySDR/releases) page
+provides test APKs. The `0.4.0` APK is debug-signed for testing; it is not a
+production-signed or Play Store build.
 
 ## Screenshots
 
