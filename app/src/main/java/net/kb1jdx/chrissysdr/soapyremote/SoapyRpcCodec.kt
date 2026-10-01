@@ -191,6 +191,10 @@ class SoapyRpcReader(payload: ByteArray) {
         require(input.available() == 0) { "Unexpected data after void response" }
     }
 
+    fun requireFinished() {
+        require(input.available() == 0) { "Unexpected trailing SoapyRemote RPC data" }
+    }
+
     private fun expect(expected: RpcType) {
         val actual = input.readUnsignedByte()
         if (actual == RpcType.EXCEPTION.id) throw SoapyRemoteException(string())

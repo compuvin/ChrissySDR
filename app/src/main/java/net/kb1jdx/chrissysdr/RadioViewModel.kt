@@ -5,11 +5,17 @@ import androidx.lifecycle.AndroidViewModel
 import com.kb1jdx.chrissysdr.radio.RadioChannelCapabilities
 import com.kb1jdx.chrissysdr.radio.RadioDeviceCapabilities
 import com.kb1jdx.chrissysdr.radio.RadioEndpoint
+import com.kb1jdx.chrissysdr.radio.RadioConnectionState
+import com.kb1jdx.chrissysdr.radio.RadioFailure
+import com.kb1jdx.chrissysdr.radio.RxReconnectPolicy
 import com.kb1jdx.chrissysdr.radio.RadioRange
 import com.kb1jdx.chrissysdr.radio.RadioService
 import com.kb1jdx.chrissysdr.radio.ReceiverConfig
 import com.kb1jdx.chrissysdr.radio.TransmitterConfig
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,6 +38,8 @@ data class RadioUiState(
     val appliedSampleRateHz: Double? = null,
     val mode: String = "AM",
     val connectionStatus: String = "Not connected",
+    val connectionState: RadioConnectionState = RadioConnectionState.DISCONNECTED,
+    val lastError: RadioFailure? = null,
     val deviceDetails: String = "",
     val devices: List<RadioDeviceChoice> = emptyList(),
     val discovering: Boolean = false,
@@ -51,6 +59,8 @@ data class RadioUiState(
 class RadioViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("radio_safety", 0)
     private val worker = Executors.newCachedThreadPool()
+    private val retryScheduler = Executors.newSingleThreadScheduledExecutor()
+    private val rxGeneration = AtomicLong()
     private val mutableState = MutableStateFlow(RadioUiState())
     val state: StateFlow<RadioUiState> = mutableState.asStateFlow()
 
@@ -78,6 +88,23 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     txStatus = if (!transmitting && it.txActive) "AM TX stopped" else it.txStatus,
                 )
             }
+        }
+    }
+
+    fun serviceDisconnected() {
+        rxGeneration.incrementAndGet()
+        radioService = null
+        mutableState.update {
+            it.copy(
+                rxActive = false,
+                rxBusy = false,
+                txActive = false,
+                txBusy = false,
+                connectionState = RadioConnectionState.DISCONNECTED,
+                connectionStatus = "Radio service disconnected",
+                rxStatus = "RX stopped: radio service disconnected",
+                txStatus = "AM TX stopped: radio service disconnected",
+            )
         }
     }
 
@@ -123,13 +150,20 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         val snapshot = mutableState.value
         val port = snapshot.port.toIntOrNull()
         if (snapshot.host.isBlank() || port == null || port !in 1..65535) {
-            mutableState.update { it.copy(connectionStatus = "Enter a valid server and port") }
+            mutableState.update {
+                it.copy(
+                    connectionStatus = "Enter a valid server and port",
+                    connectionState = RadioConnectionState.FAILED,
+                )
+            }
             return
         }
         mutableState.update {
             it.copy(
                 discovering = true,
                 connectionStatus = "Connecting…",
+                connectionState = RadioConnectionState.CONNECTING,
+                lastError = null,
                 devices = emptyList(),
                 deviceDetails = "",
             )
@@ -138,7 +172,11 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             val service = radioService
             if (service == null) {
                 mutableState.update {
-                    it.copy(discovering = false, connectionStatus = "Radio service is not ready")
+                    it.copy(
+                        discovering = false,
+                        connectionStatus = "Radio service is not ready",
+                        connectionState = RadioConnectionState.FAILED,
+                    )
                 }
                 return@execute
             }
@@ -149,6 +187,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                             discovering = false,
                             connectionStatus =
                                 "Connected to ${discovery.serverId}; ${discovery.devices.size} device(s)",
+                            connectionState = RadioConnectionState.CONNECTED,
+                            lastError = null,
                             devices = discovery.devices.map { device ->
                                 RadioDeviceChoice(
                                     label = device.label,
@@ -159,11 +199,13 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
+                    val failure = RadioFailure.from("Connection failed", error)
                     mutableState.update {
                         it.copy(
                             discovering = false,
-                            connectionStatus =
-                                "Connection failed: ${error.message ?: error.javaClass.simpleName}",
+                            connectionStatus = failure.displayMessage,
+                            connectionState = RadioConnectionState.FAILED,
+                            lastError = failure,
                         )
                     }
                 }
@@ -189,11 +231,13 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             }
                 .onSuccess { info -> configureDevice(snapshot.host, port, choice, info) }
                 .onFailure { error ->
+                    val failure = RadioFailure.from("Device query failed", error)
                     mutableState.update {
                         it.copy(
                             inspecting = false,
-                            connectionStatus =
-                                "Device query failed: ${error.message ?: error.javaClass.simpleName}",
+                            connectionStatus = failure.displayMessage,
+                            connectionState = RadioConnectionState.FAILED,
+                            lastError = failure,
                         )
                     }
                 }
@@ -260,6 +304,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 host = host,
                 inspecting = false,
                 connectionStatus = "Selected ${choice.label}",
+                connectionState = RadioConnectionState.CONNECTED,
+                lastError = null,
                 deviceDetails = formatDeviceInfo(info),
                 sampleRateHz = rxRate,
                 automaticSampleRateHz = rxRate,
@@ -350,8 +396,35 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         val hardwareBandwidth = BandwidthPolicy.choose(
             capabilities.bandwidths, capabilities.bandwidthRanges, bandwidth,
         )
-        mutableState.update { it.copy(rxBusy = true, rxStatus = "Opening RX stream…") }
+        val config = ReceiverConfig(
+            endpoint = RadioEndpoint(snapshot.host, selectedPort),
+            deviceArguments = device,
+            frequencyHz = frequency,
+            bandwidthHz = bandwidth,
+            hardwareBandwidthHz = hardwareBandwidth,
+            sampleRate = sampleRate,
+            format = format.format,
+            fullScale = format.fullScale,
+        )
+        val generation = rxGeneration.incrementAndGet()
+        openReceiver(config, generation, 0)
+    }
+
+    private fun openReceiver(config: ReceiverConfig, generation: Long, retryCount: Int) {
+        if (generation != rxGeneration.get()) return
+        mutableState.update {
+            it.copy(
+                rxBusy = true,
+                rxStatus = if (retryCount == 0) "Opening RX stream…" else
+                    "Reconnecting RX ($retryCount/${RxReconnectPolicy.MAX_RETRIES})…",
+                connectionState = if (retryCount == 0) it.connectionState else
+                    RadioConnectionState.RECONNECTING,
+                connectionStatus = if (retryCount == 0) it.connectionStatus else
+                    "Reconnecting to ${config.endpoint.host}…",
+            )
+        }
         worker.execute {
+            if (generation != rxGeneration.get()) return@execute
             val service = radioService
             if (service == null) {
                 mutableState.update {
@@ -359,70 +432,117 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 return@execute
             }
+            val failed = AtomicBoolean(false)
             runCatching {
                 service.startReceiver(
-                    ReceiverConfig(
-                        endpoint = RadioEndpoint(snapshot.host, selectedPort),
-                        deviceArguments = device,
-                        frequencyHz = frequency,
-                        bandwidthHz = bandwidth,
-                        hardwareBandwidthHz = hardwareBandwidth,
-                        sampleRate = sampleRate,
-                        format = format.format,
-                        fullScale = format.fullScale,
-                    ),
+                    config,
                     onStatistics = { stats ->
-                        mutableState.update {
-                            it.copy(
-                                rxStatus = buildString {
-                                    append("Playing AM • %.1f ksps".format(stats.samplesPerSecond / 1_000))
-                                    append(" • RMS %.1f dBFS".format(stats.rmsDbfs))
-                                    append(" • gaps ${stats.sequenceGaps}")
-                                },
-                            )
+                        if (generation == rxGeneration.get()) {
+                            mutableState.update {
+                                it.copy(
+                                    rxStatus = buildString {
+                                        append("Playing AM • %.1f ksps".format(stats.samplesPerSecond / 1_000))
+                                        append(" • RMS %.1f dBFS".format(stats.rmsDbfs))
+                                        append(" • gaps ${stats.sequenceGaps}")
+                                    },
+                                )
+                            }
                         }
                     },
                     onError = { error ->
-                        mutableState.update {
-                            it.copy(
-                                rxActive = false,
-                                rxBusy = false,
-                                rxStatus = "RX failed: ${error.message ?: error.javaClass.simpleName}",
-                            )
+                        if (failed.compareAndSet(false, true) && generation == rxGeneration.get()) {
+                            handleRxFailure(config, generation, retryCount, error, true)
                         }
                     },
+                    isCancelled = { generation != rxGeneration.get() },
                 )
             }.onSuccess { appliedSampleRate ->
-                mutableState.update {
-                    it.copy(
-                        rxActive = true,
-                        rxBusy = false,
-                        appliedSampleRateHz = appliedSampleRate,
-                        rxStatus = "AM audio active • applied ${formatHz(appliedSampleRate)}",
-                    )
+                if (!failed.get() && generation == rxGeneration.get()) {
+                    mutableState.update {
+                        it.copy(
+                            rxActive = true,
+                            rxBusy = false,
+                            connectionState = RadioConnectionState.CONNECTED,
+                            connectionStatus = "Connected to ${config.endpoint.host}:${config.endpoint.port}",
+                            lastError = null,
+                            appliedSampleRateHz = appliedSampleRate,
+                            rxStatus = "AM audio active • applied ${formatHz(appliedSampleRate)}",
+                        )
+                    }
                 }
             }.onFailure { error ->
-                mutableState.update {
-                    it.copy(
-                        rxActive = false,
-                        rxBusy = false,
-                        rxStatus = "Could not start RX: ${error.message ?: error.javaClass.simpleName}",
-                    )
+                if (failed.compareAndSet(false, true) && generation == rxGeneration.get()) {
+                    handleRxFailure(config, generation, retryCount, error, retryCount > 0)
                 }
             }
         }
     }
 
-    fun stopReceiver() {
-        mutableState.update { it.copy(rxBusy = true, rxStatus = "Stopping RX…") }
-        closeReceiverAsync()
+    private fun handleRxFailure(
+        config: ReceiverConfig,
+        generation: Long,
+        retryCount: Int,
+        error: Throwable,
+        streamWasEstablished: Boolean,
+    ) {
+        val failure = RadioFailure.from("RX failed", error)
+        val delay = RxReconnectPolicy.delaySeconds(
+            failure.kind, retryCount, streamWasEstablished,
+        )
+        if (delay != null) {
+            val nextRetry = retryCount + 1
+            mutableState.update {
+                it.copy(
+                    rxActive = false,
+                    rxBusy = false,
+                    connectionState = RadioConnectionState.RECONNECTING,
+                    connectionStatus = "Reconnecting to ${config.endpoint.host}…",
+                    lastError = failure,
+                    rxStatus = "${failure.displayMessage}; retrying RX ($nextRetry/${RxReconnectPolicy.MAX_RETRIES})",
+                )
+            }
+            retryScheduler.schedule(
+                { if (generation == rxGeneration.get()) openReceiver(config, generation, nextRetry) },
+                delay,
+                TimeUnit.SECONDS,
+            )
+        } else {
+            mutableState.update {
+                it.copy(
+                    rxActive = false,
+                    rxBusy = false,
+                    connectionState = RadioConnectionState.FAILED,
+                    connectionStatus = "RX connection failed",
+                    lastError = failure,
+                    rxStatus = failure.displayMessage,
+                )
+            }
+        }
     }
 
-    private fun closeReceiverAsync() {
+    fun stopReceiver() {
+        val generation = rxGeneration.incrementAndGet()
+        radioService?.cancelPendingReceiver()
+        mutableState.update { it.copy(rxBusy = true, rxStatus = "Stopping RX…") }
+        closeReceiverAsync(generation)
+    }
+
+    private fun closeReceiverAsync(generation: Long) {
         worker.execute {
+            if (generation != rxGeneration.get()) return@execute
             runCatching { radioService?.stopReceiver() }
-            mutableState.update {
-                it.copy(rxActive = false, rxBusy = false, rxStatus = "RX stopped")
+            if (generation == rxGeneration.get()) {
+                mutableState.update {
+                    it.copy(
+                        rxActive = false,
+                        rxBusy = false,
+                        rxStatus = "RX stopped",
+                        connectionState = if (it.connectionState == RadioConnectionState.RECONNECTING)
+                            RadioConnectionState.DISCONNECTED else it.connectionState,
+                        connectionStatus = if (it.connectionState == RadioConnectionState.RECONNECTING)
+                            "RX retry cancelled" else it.connectionStatus,
+                    )
+                }
             }
         }
     }
@@ -454,6 +574,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         val frequency = snapshot.frequency.toDouble()
         val format = selectedTxFormat ?: return
         val sampleRate = selectedTxSampleRate ?: return
+        rxGeneration.incrementAndGet() // A failed or stopped TX must never revive an old RX retry.
+        radioService?.cancelPendingReceiver()
         resumeRxAfterTx = snapshot.rxActive
         mutableState.update { it.copy(txBusy = true, txStatus = "Stopping RX and opening AM TX…") }
         worker.execute {
@@ -484,9 +606,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     },
                     onStopped = { stopTransmitter("AM TX time limit reached") },
                     onError = { error ->
-                        stopTransmitter(
-                            "AM TX failed: ${error.message ?: error.javaClass.simpleName}",
-                        )
+                        val failure = RadioFailure.from("AM TX failed", error)
+                        mutableState.update { it.copy(lastError = failure) }
+                        stopTransmitter(failure.displayMessage)
                     },
                 )
             }.onSuccess { appliedSampleRate ->
@@ -502,13 +624,15 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }.onFailure { error ->
+                val failure = RadioFailure.from("Could not start AM TX", error)
                 val resumeReceiver = resumeRxAfterTx
                 resumeRxAfterTx = false
                 mutableState.update {
                     it.copy(
                         txActive = false,
                         txBusy = false,
-                        txStatus = "Could not start AM TX: ${error.message ?: error.javaClass.simpleName}",
+                        lastError = failure,
+                        txStatus = failure.displayMessage,
                     )
                 }
                 if (resumeReceiver) startReceiver()
@@ -534,11 +658,15 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        rxGeneration.incrementAndGet()
+        radioService?.cancelPendingReceiver()
         resumeRxAfterTx = false
         radioService?.setStateListener(null)
         radioService = null
         worker.shutdownNow()
+        retryScheduler.shutdownNow()
     }
+
 }
 
 private fun RadioChannelCapabilities?.supportedFormat(): StreamFormatChoice? = this?.let {

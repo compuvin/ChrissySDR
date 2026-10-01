@@ -21,6 +21,7 @@ class RadioService : Service() {
     private val lock = Any()
     private var receiver: RadioReceiver? = null
     private var transmitter: RadioTransmitter? = null
+    @Volatile private var pendingRxOpen: RadioOpenCancellation? = null
     @Volatile private var stateListener: ((Boolean, Boolean) -> Unit)? = null
 
     override fun onCreate() {
@@ -63,31 +64,63 @@ class RadioService : Service() {
         config: ReceiverConfig,
         onStatistics: (ReceiverStatistics) -> Unit,
         onError: (Throwable) -> Unit,
+        isCancelled: () -> Boolean = { false },
     ): Double = synchronized(lock) {
-        receiver?.close()
-        val session = backend.openReceiver(config)
+        check(!isCancelled()) { "RX start cancelled" }
+        runCatching { receiver?.close() }
+        receiver = null
+        val cancellation = RadioOpenCancellation()
+        pendingRxOpen = cancellation
         try {
-            session.start(
-                onStatistics = onStatistics,
-                onError = { error ->
-                    synchronized(lock) {
-                        if (receiver === session) receiver = null
-                    }
-                    updateForegroundState()
-                    onError(error)
-                },
-            )
+            check(!isCancelled() && !cancellation.isCancelled()) { "RX start cancelled" }
+            val session = backend.openReceiver(config, cancellation)
             receiver = session
-            promote("Receiving ${formatFrequency(config.frequencyHz)}")
-            notifyState()
-            session.appliedSampleRate
+            try {
+                check(!isCancelled() && !cancellation.isCancelled()) { "RX start cancelled" }
+                session.start(
+                    onStatistics = onStatistics,
+                    onError = { error ->
+                        val current = synchronized(lock) {
+                            if (receiver === session) {
+                                receiver = null
+                                true
+                            } else false
+                        }
+                        if (current) {
+                            runCatching { session.close() }
+                            notifyState()
+                            updateForegroundState()
+                            onError(error)
+                        }
+                    },
+                )
+                check(!isCancelled() && !cancellation.isCancelled()) { "RX start cancelled" }
+                if (receiver === session) {
+                    promote("Receiving ${formatFrequency(config.frequencyHz)}")
+                    notifyState()
+                }
+                session.appliedSampleRate
+            } catch (error: Throwable) {
+                if (receiver === session) receiver = null
+                runCatching { session.close() }
+                throw error
+            }
         } catch (error: Throwable) {
-            session.close()
+            notifyState()
+            updateForegroundState()
             throw error
+        } finally {
+            if (pendingRxOpen === cancellation) pendingRxOpen = null
+            cancellation.release()
         }
     }
 
+    fun cancelPendingReceiver() {
+        pendingRxOpen?.cancel()
+    }
+
     fun stopReceiver() {
+        cancelPendingReceiver()
         val session = synchronized(lock) {
             val current = receiver
             receiver = null
@@ -104,28 +137,47 @@ class RadioService : Service() {
         onStopped: () -> Unit,
         onError: (Throwable) -> Unit,
     ): Double = synchronized(lock) {
-        receiver?.close()
+        runCatching { receiver?.close() }
         receiver = null
-        transmitter?.close()
-        val session = backend.openTransmitter(config)
+        runCatching { transmitter?.close() }
+        transmitter = null
+        val session = try {
+            backend.openTransmitter(config)
+        } catch (error: Throwable) {
+            notifyState()
+            updateForegroundState()
+            throw error
+        }
+        transmitter = session
         try {
             session.start(
                 onStatistics = onStatistics,
                 onStopped = onStopped,
                 onError = { error ->
-                    synchronized(lock) {
-                        if (transmitter === session) transmitter = null
+                    val current = synchronized(lock) {
+                        if (transmitter === session) {
+                            transmitter = null
+                            true
+                        } else false
                     }
-                    updateForegroundState()
-                    onError(error)
+                    if (current) {
+                        runCatching { session.close() }
+                        notifyState()
+                        updateForegroundState()
+                        onError(error)
+                    }
                 },
             )
-            transmitter = session
-            promote("Transmitting ${formatFrequency(config.frequencyHz)}")
-            notifyState()
+            if (transmitter === session) {
+                promote("Transmitting ${formatFrequency(config.frequencyHz)}")
+                notifyState()
+            }
             session.appliedSampleRate
         } catch (error: Throwable) {
-            session.close()
+            if (transmitter === session) transmitter = null
+            runCatching { session.close() }
+            notifyState()
+            updateForegroundState()
             throw error
         }
     }
@@ -142,6 +194,7 @@ class RadioService : Service() {
     }
 
     fun closeAll() {
+        cancelPendingReceiver()
         val sessions = synchronized(lock) {
             val current = receiver to transmitter
             receiver = null

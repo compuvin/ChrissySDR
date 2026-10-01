@@ -12,6 +12,50 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-09-30 — Upstream Soapy capability and format audit
+
+- **App version:** `0.3.0-beta.5` debug build.
+- **References:** [SoapySDR stream API](https://github.com/pothosware/SoapySDR/blob/master/include/SoapySDR/Device.hpp),
+  [SoapyRemote call IDs](https://github.com/pothosware/SoapyRemote/blob/master/common/SoapyRemoteDefs.hpp),
+  [server capability replies](https://github.com/pothosware/SoapyRemote/blob/master/server/ClientHandler.cpp),
+  and [client stream setup](https://github.com/pothosware/SoapyRemote/blob/master/client/Streaming.cpp).
+- **Audit result:** Per-channel requests use the upstream direction/channel
+  argument order. Native stream format replies contain a format string followed
+  by its full-scale value; stream argument replies use the upstream argument-info
+  layout. The selected format is advertised and decoded with native full scale
+  only when it matches the native format. ChrissySDR talks directly to the
+  server, so it does not use the C++ client's local `remote:scale` conversion.
+- **Changes:** Reject RPC versions older than the range-step wire format, cap
+  reply size, and reject trailing reply fields instead of silently ignoring
+  protocol mismatches. Added format and frame tests.
+- **Automated result:** Unit tests and debug APK assembly passed.
+- **Device result:** Pending regression test with SoapyRemote hardware.
+
+## 2026-09-30 — Connection and stream lifecycle hardening
+
+- **App version:** `0.3.0-beta.2` debug build for the live reconnect test;
+  `0.3.0-beta.3` adds a Stop RX control during opening and reconnecting;
+  `0.3.0-beta.4` limits retries to streams that were previously established.
+- **Scope:** Structured failure categories and connection states; bounded RX-only
+  retries after network or stream errors (1, 2, and 4 seconds); cancellation of
+  pending RX socket opens; RX/TX stream-status errors; and cleanup after partial
+  opens, startup failures, and stream failures. TX never retries automatically.
+- **Automated result:** Unit tests and debug APK assembly passed. Tests cover
+  failure classification, retry limits, status packets, and pending-open socket
+  cancellation.
+- **Device result:** The operator monitored WWV at 5 MHz, stopped SoapyRemote,
+  and restarted it immediately; ChrissySDR reconnected and WWV audio resumed. On a
+  second attempt, SoapyRemote stayed down longer; ChrissySDR exhausted its
+  bounded retries and displayed a timeout message. Both outcomes are expected.
+- **Further device result:** The operator reports that Stop during a pending
+  retry, manual RX restart after retry exhaustion, and repeated start/stop
+  cycles passed in `0.3.0-beta.3`.
+- **New issue:** Pressing Start RX while SoapyRemote was down also triggered
+  three automatic retries, even though RX had never been established. In
+  `0.3.0-beta.4`, the first failed open reports its error once; bounded retries
+  remain available after an established RX stream is lost. Device retest of
+  that correction is pending. TX was not tested.
+
 ## 2026-09-30 — RTL-SDR V4 bandwidth selection
 
 - **Radio:** RTL-SDR V4 (R828D) through SoapyRemote on the Pi.

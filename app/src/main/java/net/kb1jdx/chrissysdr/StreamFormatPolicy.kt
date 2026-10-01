@@ -3,6 +3,8 @@ package com.kb1jdx.chrissysdr
 data class StreamFormatChoice(val format: String, val fullScale: Double)
 
 object StreamFormatPolicy {
+    // getNativeStreamFormat() supplies fullScale only for the native format.
+    // For other formats, use their nominal CS8/CS16/CF32 sample scale.
     fun choose(
         availableFormats: List<String>,
         nativeFormat: String?,

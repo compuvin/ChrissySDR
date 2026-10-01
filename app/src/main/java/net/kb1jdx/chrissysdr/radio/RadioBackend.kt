@@ -110,6 +110,6 @@ interface RadioTransmitter : AutoCloseable {
 interface RadioBackend {
     fun discover(endpoint: RadioEndpoint): RadioDiscovery
     fun inspect(endpoint: RadioEndpoint, deviceArguments: Map<String, String>): RadioDeviceCapabilities
-    fun openReceiver(config: ReceiverConfig): RadioReceiver
+    fun openReceiver(config: ReceiverConfig, cancellation: RadioOpenCancellation): RadioReceiver
     fun openTransmitter(config: TransmitterConfig): RadioTransmitter
 }

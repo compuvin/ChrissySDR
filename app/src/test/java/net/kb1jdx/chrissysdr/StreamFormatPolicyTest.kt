@@ -41,4 +41,11 @@ class StreamFormatPolicyTest {
             StreamFormatPolicy.choose(listOf("CS16"), "CS16", 0.0),
         )
     }
+
+    @Test fun doesNotRequestAnUnadvertisedNativeFormat() {
+        assertEquals(
+            StreamFormatChoice("CS16", 32768.0),
+            StreamFormatPolicy.choose(listOf("CS16"), "CS8", 64.0),
+        )
+    }
 }

@@ -2,6 +2,8 @@ package com.kb1jdx.chrissysdr.soapyremote
 
 import com.kb1jdx.chrissysdr.audio.AndroidAudioOutput
 import com.kb1jdx.chrissysdr.dsp.AmReceivePipeline
+import com.kb1jdx.chrissysdr.radio.SoapyStreamException
+import com.kb1jdx.chrissysdr.radio.RadioOpenCancellation
 import java.io.DataInputStream
 import java.io.OutputStream
 import java.nio.ByteBuffer
@@ -33,26 +35,32 @@ class SoapyRemoteRxSession private constructor(
 ) : AutoCloseable {
     private val sampleCodec = IqSampleCodec(streamFormat, fullScale)
     private val running = AtomicBoolean(false)
+    private val closed = AtomicBoolean(false)
     private var readerThread: Thread? = null
     @Volatile private var audioOutput: AndroidAudioOutput? = null
 
     fun start(onStatistics: (RxStatistics) -> Unit, onError: (Throwable) -> Unit) {
+        check(!closed.get()) { "RX stream is closed" }
         check(running.compareAndSet(false, true)) { "RX stream is already running" }
-        val activation = transact(
-            SoapyRpcWriter().call(ACTIVATE_STREAM).int32(streamId).int32(0).int64(0).int32(0),
-        ) { it.int32() }
-        check(activation == 0) { "SoapyRemote activateStream returned $activation" }
+        try {
+            val activation = transact(
+                SoapyRpcWriter().call(ACTIVATE_STREAM).int32(streamId).int32(0).int64(0).int32(0),
+            ) { it.int32() }
+            check(activation == 0) { "SoapyRemote activateStream returned $activation" }
 
-        val audioSampleRate = minOf(MAX_AUDIO_SAMPLE_RATE, inputSampleRate.toInt())
-        check(audioSampleRate >= MIN_AUDIO_SAMPLE_RATE) {
-            "The selected sample rate is too low for Android audio ($inputSampleRate Hz)"
+            val audioSampleRate = minOf(MAX_AUDIO_SAMPLE_RATE, inputSampleRate.toInt())
+            check(audioSampleRate >= MIN_AUDIO_SAMPLE_RATE) {
+                "The selected sample rate is too low for Android audio ($inputSampleRate Hz)"
+            }
+            audioOutput = AndroidAudioOutput(audioSampleRate)
+            readerThread = Thread(
+                { receiveLoop(audioSampleRate, onStatistics, onError) },
+                "SoapyRemote-RX",
+            ).apply { start() }
+        } catch (error: Throwable) {
+            close()
+            throw error
         }
-        audioOutput = AndroidAudioOutput(audioSampleRate)
-
-        readerThread = Thread(
-            { receiveLoop(audioSampleRate, onStatistics, onError) },
-            "SoapyRemote-RX",
-        ).apply { start() }
     }
 
     private fun receiveLoop(
@@ -60,8 +68,6 @@ class SoapyRemoteRxSession private constructor(
         onStatistics: (RxStatistics) -> Unit,
         onError: (Throwable) -> Unit,
     ) {
-        val input = DataInputStream(stream.getInputStream())
-        val output = stream.getOutputStream()
         var nextSequence = 0L
         var acknowledgedSequence = 0L
         var gaps = 0L
@@ -70,10 +76,13 @@ class SoapyRemoteRxSession private constructor(
         var sumSquares = 0.0
         var peak = 0.0
         var intervalStart = System.nanoTime()
-        val audioPipeline = AmReceivePipeline(inputSampleRate, audioSampleRate, passbandHz)
+        var lastPacketAt = intervalStart
         val bytesPerElement = sampleCodec.bytesPerElement
 
         try {
+            val input = DataInputStream(stream.getInputStream())
+            val output = stream.getOutputStream()
+            val audioPipeline = AmReceivePipeline(inputSampleRate, audioSampleRate, passbandHz)
             while (running.get()) {
                 try {
                     val bytes = input.readInt()
@@ -82,7 +91,7 @@ class SoapyRemoteRxSession private constructor(
                     input.readInt() // flags
                     input.readLong() // timestamp
                     require(bytes >= STREAM_HEADER_BYTES) { "Invalid stream packet size $bytes" }
-                    require(elements >= 0) { "SoapyRemote stream error $elements" }
+                    if (elements < 0) throw SoapyStreamException("SoapyRemote RX stream error $elements")
                     val payloadBytes = bytes - STREAM_HEADER_BYTES
                     require(payloadBytes == elements * bytesPerElement) {
                         "Stream packet has $payloadBytes bytes for $elements $streamFormat samples"
@@ -92,6 +101,7 @@ class SoapyRemoteRxSession private constructor(
 
                     val payload = ByteArray(payloadBytes)
                     input.readFully(payload)
+                    lastPacketAt = System.nanoTime()
                     val iq = FloatArray(elements * 2)
                     sampleCodec.decode(payload, elements, iq)
                     repeat(elements) { index ->
@@ -112,6 +122,7 @@ class SoapyRemoteRxSession private constructor(
                         sendAck(output, nextSequence, FLOW_WINDOW_PACKETS)
                         acknowledgedSequence = nextSequence
                     }
+                    drainStatusErrors()
 
                     val now = System.nanoTime()
                     val elapsed = (now - intervalStart) / 1_000_000_000.0
@@ -132,15 +143,26 @@ class SoapyRemoteRxSession private constructor(
                         intervalStart = now
                     }
                 } catch (_: SocketTimeoutException) {
-                    // Recheck the stop flag.
+                    if (System.nanoTime() - lastPacketAt > STREAM_STALL_NS) {
+                        throw SoapyStreamException("No RX samples received for 10 seconds")
+                    }
+                    drainStatusErrors()
                 }
             }
         } catch (error: Throwable) {
-            if (running.get()) onError(error)
+            if (running.get()) {
+                close()
+                onError(error)
+            }
         }
     }
 
+    private fun drainStatusErrors() {
+        SoapyStreamStatus.drain(DataInputStream(status.getInputStream()), "RX")
+    }
+
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
         if (running.getAndSet(false)) {
             runCatching {
                 transact(
@@ -148,12 +170,14 @@ class SoapyRemoteRxSession private constructor(
                 ) { it.int32() }
             }
         }
-        readerThread?.join(2_000)
+        runCatching { stream.close() }
+        runCatching { status.close() }
+        if (Thread.currentThread() !== readerThread) {
+            runCatching { readerThread?.join(2_000) }
+        }
         audioOutput?.runCatching { close() }
         audioOutput = null
         runCatching { transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(streamId)) { it.requireVoid() } }
-        runCatching { stream.close() }
-        runCatching { status.close() }
         runCatching { transact(SoapyRpcWriter().call(UNMAKE)) { it.requireVoid() } }
         runCatching { transact(SoapyRpcWriter().call(HANGUP)) { it.requireVoid() } }
         runCatching { control.close() }
@@ -162,7 +186,8 @@ class SoapyRemoteRxSession private constructor(
     @Synchronized
     private fun <T> transact(request: SoapyRpcWriter, decode: (SoapyRpcReader) -> T): T {
         control.getOutputStream().apply { write(request.frame().encode()); flush() }
-        return decode(SoapyRpcReader(SoapyRpcFrame.readFrom(control.getInputStream()).payload))
+        val reader = SoapyRpcReader(SoapyRpcFrame.readFrom(control.getInputStream()).payload)
+        return decode(reader).also { reader.requireFinished() }
     }
 
     companion object {
@@ -183,6 +208,7 @@ class SoapyRemoteRxSession private constructor(
         private const val ACK_INTERVAL_PACKETS = FLOW_WINDOW_PACKETS / 8
         private const val MAX_AUDIO_SAMPLE_RATE = 48_000
         private const val MIN_AUDIO_SAMPLE_RATE = 8_000
+        private const val STREAM_STALL_NS = 10_000_000_000L
         private const val SET_SAMPLE_RATE = 900
         private const val GET_SAMPLE_RATE = 901
 
@@ -196,24 +222,29 @@ class SoapyRemoteRxSession private constructor(
             sampleRate: Double,
             format: String,
             fullScale: Double,
+            cancellation: RadioOpenCancellation,
         ): SoapyRemoteRxSession {
             require(sampleRate >= MIN_AUDIO_SAMPLE_RATE) { "Sample rate must be at least 8000 Hz" }
             require(bandwidthHz.isFinite() && bandwidthHz > 0.0) { "Passband must be positive" }
             IqSampleCodec(format, fullScale)
-            val control = Socket()
+            val control = Socket().also(cancellation::register)
             var stream: Socket? = null
             var status: Socket? = null
+            var made = false
+            var streamId: Int? = null
+            fun <T> transact(request: SoapyRpcWriter, decode: (SoapyRpcReader) -> T): T {
+                control.getOutputStream().apply { write(request.frame().encode()); flush() }
+                val reader = SoapyRpcReader(SoapyRpcFrame.readFrom(control.getInputStream()).payload)
+                return decode(reader).also { reader.requireFinished() }
+            }
             try {
                 control.connect(InetSocketAddress(host.trim(), port), 3_000)
                 control.soTimeout = 10_000
-                fun <T> transact(request: SoapyRpcWriter, decode: (SoapyRpcReader) -> T): T {
-                    control.getOutputStream().apply { write(request.frame().encode()); flush() }
-                    return decode(SoapyRpcReader(SoapyRpcFrame.readFrom(control.getInputStream()).payload))
-                }
 
                 transact(SoapyRpcWriter().call(MAKE).kwargs(deviceArgs - "soapy_remote_no_deeper")) {
                     it.requireVoid()
                 }
+                made = true
                 transact(
                     SoapyRpcWriter().call(SET_SAMPLE_RATE).char(RX).int32(0).float64(sampleRate),
                 ) { it.requireVoid() }
@@ -249,20 +280,25 @@ class SoapyRemoteRxSession private constructor(
                 control.getOutputStream().apply { write(setup.frame().encode()); flush() }
                 val bindPort = SoapyRpcReader(
                     SoapyRpcFrame.readFrom(control.getInputStream()).payload,
-                ).string().toInt()
+                ).let { reader -> reader.string().toInt().also { reader.requireFinished() } }
 
                 stream = Socket().apply {
+                    cancellation.register(this)
                     receiveBufferSize = SOCKET_WINDOW
                     connect(InetSocketAddress(host.trim(), bindPort), 3_000)
                     soTimeout = 1_000
                 }
-                status = Socket().apply { connect(InetSocketAddress(host.trim(), bindPort), 3_000) }
+                status = Socket().apply {
+                    cancellation.register(this)
+                    connect(InetSocketAddress(host.trim(), bindPort), 3_000)
+                }
 
                 val setupReply = SoapyRpcReader(
                     SoapyRpcFrame.readFrom(control.getInputStream()).payload,
                 )
-                val streamId = setupReply.int32()
+                streamId = setupReply.int32()
                 setupReply.string() // repeated server port
+                setupReply.requireFinished()
                 sendAck(stream!!.getOutputStream(), 0, FLOW_WINDOW_PACKETS)
                 return SoapyRemoteRxSession(
                     control, stream!!, status!!, streamId, appliedSampleRate, format, fullScale,
@@ -271,6 +307,18 @@ class SoapyRemoteRxSession private constructor(
             } catch (error: Throwable) {
                 runCatching { stream?.close() }
                 runCatching { status?.close() }
+                if (control.isConnected && !control.isClosed) {
+                    runCatching { control.soTimeout = 1_000 }
+                    streamId?.let { id ->
+                        runCatching {
+                            transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(id)) { it.requireVoid() }
+                        }
+                    }
+                    if (made) {
+                        runCatching { transact(SoapyRpcWriter().call(UNMAKE)) { it.requireVoid() } }
+                    }
+                    runCatching { transact(SoapyRpcWriter().call(HANGUP)) { it.requireVoid() } }
+                }
                 runCatching { control.close() }
                 throw error
             }

@@ -1,6 +1,7 @@
 package com.kb1jdx.chrissysdr.soapyremote
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -48,5 +49,15 @@ class SoapyRpcCodecTest {
             .put(3.toByte()).putLong(6_597_069_766_656_000L)
             .array()
         assertEquals(expected.toList(), SoapyRpcWriter().float64(48_000.0).frame().payload.toList())
+    }
+
+    @Test fun rejectsUnconsumedCapabilityReplyFields() {
+        val reader = SoapyRpcReader(
+            SoapyRpcWriter().string("CS16").float64(32768.0).frame().payload,
+        )
+        assertEquals("CS16", reader.string())
+        assertThrows(IllegalArgumentException::class.java) { reader.requireFinished() }
+        assertEquals(32768.0, reader.float64(), 0.0)
+        reader.requireFinished()
     }
 }

@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kb1jdx.chrissysdr.radio.RadioService
+import com.kb1jdx.chrissysdr.radio.RadioConnectionState
 
 class MainActivity : ComponentActivity() {
     private val radio: RadioViewModel by viewModels()
@@ -90,6 +91,7 @@ class MainActivity : ComponentActivity() {
 
         override fun onServiceDisconnected(name: ComponentName?) {
             serviceBound = false
+            radio.serviceDisconnected()
         }
     }
 
@@ -540,12 +542,15 @@ private fun SettingsSheet(
             )
         }
         Spacer(Modifier.height(12.dp))
+        val rxCanStop = state.rxActive || state.rxBusy ||
+            state.connectionState == RadioConnectionState.RECONNECTING
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
-                onClick = if (state.rxActive) onStopRx else onStartRx,
-                enabled = state.rxAvailable && !state.rxBusy && !state.txActive,
+                onClick = if (rxCanStop) onStopRx else onStartRx,
+                enabled = !state.txActive && !state.rxStatus.startsWith("Stopping RX") &&
+                    (rxCanStop || state.rxAvailable),
                 modifier = Modifier.weight(1f),
-            ) { Text(if (state.rxActive) "Stop RX" else "Start RX") }
+            ) { Text(if (rxCanStop) "Stop RX" else "Start RX") }
             OutlinedButton(
                 onClick = {},
                 enabled = false,

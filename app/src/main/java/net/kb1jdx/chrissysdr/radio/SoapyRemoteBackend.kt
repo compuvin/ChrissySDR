@@ -39,7 +39,7 @@ class SoapyRemoteBackend(
         )
     }
 
-    override fun openReceiver(config: ReceiverConfig): RadioReceiver {
+    override fun openReceiver(config: ReceiverConfig, cancellation: RadioOpenCancellation): RadioReceiver {
         val session = SoapyRemoteRxSession.open(
             config.endpoint.host,
             config.endpoint.port,
@@ -50,6 +50,7 @@ class SoapyRemoteBackend(
             config.sampleRate,
             config.format,
             config.fullScale,
+            cancellation,
         )
         return object : RadioReceiver {
             override val appliedSampleRate = session.inputSampleRate

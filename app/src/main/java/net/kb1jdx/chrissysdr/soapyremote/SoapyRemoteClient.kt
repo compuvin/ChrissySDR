@@ -78,10 +78,10 @@ class SoapyRemoteClient(
                     allRxCapabilities, allTxCapabilities,
                 )
             } finally {
-                runCatching {
-                    if (made) transact(socket, SoapyRpcWriter().call(UNMAKE)) { it.requireVoid() }
-                    transact(socket, SoapyRpcWriter().call(HANGUP)) { it.requireVoid() }
+                if (made) {
+                    runCatching { transact(socket, SoapyRpcWriter().call(UNMAKE)) { it.requireVoid() } }
                 }
+                runCatching { transact(socket, SoapyRpcWriter().call(HANGUP)) { it.requireVoid() } }
             }
         }
     }
@@ -153,10 +153,13 @@ class SoapyRemoteClient(
 
     private fun <T> transact(socket: Socket, request: SoapyRpcWriter, decode: (SoapyRpcReader) -> T): T {
         socket.getOutputStream().apply { write(request.frame().encode()); flush() }
-        return decode(SoapyRpcReader(SoapyRpcFrame.readFrom(socket.getInputStream()).payload))
+        val reader = SoapyRpcReader(SoapyRpcFrame.readFrom(socket.getInputStream()).payload)
+        return decode(reader).also { reader.requireFinished() }
     }
 
     companion object {
+        // Wire call IDs from SoapyRemote/common/SoapyRemoteDefs.hpp. Each
+        // capability request is direction (char), then channel (int32).
         const val DEFAULT_PORT = 55132
         private const val FIND = 0
         private const val MAKE = 1
