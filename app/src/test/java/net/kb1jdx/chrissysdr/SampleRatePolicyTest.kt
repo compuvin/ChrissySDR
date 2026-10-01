@@ -8,6 +8,16 @@ import org.junit.Test
 
 class SampleRatePolicyTest {
     @Test
+    fun rtlSdrRatesSupportTwelveKilohertzPassband() {
+        val choice = SampleRatePolicy.choose(
+            discreteRates = listOf(250_000.0, 1_024_000.0, 1_536_000.0),
+            ranges = listOf(RadioRange(225_001.0, 300_000.0, 0.0)),
+            bandwidthHz = 12_000.0,
+        )
+        assertEquals(250_000.0, choice.automaticRate)
+    }
+
+    @Test
     fun fixedFlexRateIsSelectedAutomatically() {
         val choice = SampleRatePolicy.choose(
             discreteRates = listOf(48_000.0),

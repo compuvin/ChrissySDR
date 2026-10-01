@@ -127,7 +127,7 @@ After safe Soapy TX:
 - [ ] Service tests cover rotation, backgrounding, screen lock, network loss, audio-route changes, repeated start/stop, and process/service termination.
 - [ ] Compose tests cover bottom-sheet controls, disabled TX state, tuning gestures, validation, and error presentation.
 - [ ] Each milestone requires a clean `test assembleDebug` build plus live FLEX-1500 verification.
-- [ ] Generic compatibility is not claimed solely from FLEX testing; the receiver release also requires a second-rate integration fixture or another Soapy radio.
+- [x] Generic compatibility is not claimed solely from FLEX testing; the receiver release also requires a second-rate integration fixture or another Soapy radio.
 
 ## Assumptions and Defaults
 

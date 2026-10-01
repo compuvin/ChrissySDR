@@ -31,4 +31,11 @@ class BandwidthPolicyTest {
     @Test fun noAdvertisedBandwidthLeavesHardwareFilterUnset() {
         assertNull(BandwidthPolicy.choose(emptyList(), emptyList(), 12_000.0))
     }
+
+    @Test fun zeroMinimumRangeStillContainsPositivePassband() {
+        assertEquals(
+            12_000.0,
+            BandwidthPolicy.choose(emptyList(), listOf(RadioRange(0.0, 8_000_000.0, 0.0)), 12_000.0),
+        )
+    }
 }

@@ -12,6 +12,23 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-09-30 — RTL-SDR V4 bandwidth selection
+
+- **Radio:** RTL-SDR V4 (R828D) through SoapyRemote on the Pi.
+- **Observation:** Discovery succeeded, but RX was unavailable with a 12 kHz
+  passband. The device reported a 0–8 MHz bandwidth range and a minimum
+  discrete sample rate of 250 kHz.
+- **Cause:** ChrissySDR discarded bandwidth ranges whose minimum was zero.
+- **Fix:** Accept zero as a reported range minimum while selecting a positive
+  bandwidth that contains the requested passband. A unit test now covers the
+  reported range; Android unit tests and debug APK assembly pass.
+- **Device retest:** Successful. The operator received WWV at 10 MHz with the
+  RTL-SDR V4 after installing the updated APK; the previous passband error did
+  not recur. This provides a live RX test on a second Soapy radio. The reported
+  frequency range did not include 10 MHz, so the successful reception also
+  shows that this driver's advertised range is not exhaustive for this setup.
+- **Not tested:** Other receive modes or transmit; the RTL-SDR V4 is RX-only.
+
 ## 2026-09-29 — Stream-format RX regression
 
 - **App version:** `0.3.0-beta.1` debug build with new I/Q format handling.

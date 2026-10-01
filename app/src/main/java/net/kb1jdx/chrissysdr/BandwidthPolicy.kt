@@ -10,7 +10,7 @@ object BandwidthPolicy {
         val discreteCandidates = discrete.filter { it.isFinite() && it >= passbandHz }
         val rangeCandidates = ranges.mapNotNull { range ->
             if (!range.minimum.isFinite() || !range.maximum.isFinite() ||
-                range.minimum <= 0.0 || range.maximum < range.minimum
+                range.minimum < 0.0 || range.maximum < range.minimum
             ) return@mapNotNull null
             val minimum = maxOf(passbandHz, range.minimum)
             if (minimum > range.maximum) return@mapNotNull null
