@@ -504,6 +504,7 @@ private fun SettingsSheet(
     onStopRx: () -> Unit,
 ) {
     var showUnknownRangeWarning by remember { mutableStateOf(false) }
+    var showAdditionalRadioInfo by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -636,12 +637,20 @@ private fun SettingsSheet(
                 modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                 colors = CardDefaults.cardColors(containerColor = SpectrumBackground),
             ) {
-                Text(
-                    state.deviceDetails,
-                    modifier = Modifier.padding(14.dp),
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                )
+                Column(Modifier.padding(14.dp)) {
+                    Text(
+                        state.deviceDetails,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                    )
+                    if (state.connectionState == RadioConnectionState.CONNECTED &&
+                        state.additionalDeviceDetails.isNotBlank()
+                    ) {
+                        TextButton(onClick = { showAdditionalRadioInfo = true }) {
+                            Text("Additional Radio Info")
+                        }
+                    }
+                }
             }
         }
         Text(
@@ -650,6 +659,24 @@ private fun SettingsSheet(
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 12.sp,
+        )
+    }
+
+    if (showAdditionalRadioInfo) {
+        AlertDialog(
+            onDismissRequest = { showAdditionalRadioInfo = false },
+            title = { Text("Additional Radio Info") },
+            text = {
+                Text(
+                    state.additionalDeviceDetails,
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showAdditionalRadioInfo = false }) { Text("Close") }
+            },
         )
     }
 

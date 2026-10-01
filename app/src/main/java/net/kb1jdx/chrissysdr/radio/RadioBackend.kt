@@ -28,6 +28,10 @@ data class RadioArgumentInfo(
     val optionNames: List<String>,
 )
 
+data class RadioSetting(val info: RadioArgumentInfo, val currentValue: String?)
+
+data class RadioSensor(val key: String, val info: RadioArgumentInfo?, val currentValue: String?)
+
 data class RadioChannelCapabilities(
     val formats: List<String>,
     val nativeFormat: String?,
@@ -44,6 +48,8 @@ data class RadioChannelCapabilities(
     val bandwidths: List<Double>,
     val bandwidthRanges: List<RadioRange>,
     val notReported: Set<String>,
+    val settings: List<RadioSetting> = emptyList(),
+    val sensors: List<RadioSensor> = emptyList(),
 )
 
 data class RadioDeviceCapabilities(
@@ -56,6 +62,9 @@ data class RadioDeviceCapabilities(
     val tx: RadioChannelCapabilities?,
     val allRx: List<RadioChannelCapabilities> = listOfNotNull(rx),
     val allTx: List<RadioChannelCapabilities> = listOfNotNull(tx),
+    val settings: List<RadioSetting> = emptyList(),
+    val sensors: List<RadioSensor> = emptyList(),
+    val notReported: Set<String> = emptySet(),
 )
 
 data class ReceiverConfig(

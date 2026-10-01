@@ -3,6 +3,7 @@ package com.kb1jdx.chrissysdr
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import com.kb1jdx.chrissysdr.radio.RadioChannelCapabilities
+import com.kb1jdx.chrissysdr.radio.RadioArgumentInfo
 import com.kb1jdx.chrissysdr.radio.RadioDeviceCapabilities
 import com.kb1jdx.chrissysdr.radio.RadioEndpoint
 import com.kb1jdx.chrissysdr.radio.RadioConnectionState
@@ -10,6 +11,8 @@ import com.kb1jdx.chrissysdr.radio.RadioFailure
 import com.kb1jdx.chrissysdr.radio.RxReconnectPolicy
 import com.kb1jdx.chrissysdr.radio.RadioRange
 import com.kb1jdx.chrissysdr.radio.RadioService
+import com.kb1jdx.chrissysdr.radio.RadioSensor
+import com.kb1jdx.chrissysdr.radio.RadioSetting
 import com.kb1jdx.chrissysdr.radio.ReceiverConfig
 import com.kb1jdx.chrissysdr.radio.TransmitterConfig
 import java.util.concurrent.Executors
@@ -41,6 +44,7 @@ data class RadioUiState(
     val connectionState: RadioConnectionState = RadioConnectionState.DISCONNECTED,
     val lastError: RadioFailure? = null,
     val deviceDetails: String = "",
+    val additionalDeviceDetails: String = "",
     val devices: List<RadioDeviceChoice> = emptyList(),
     val discovering: Boolean = false,
     val inspecting: Boolean = false,
@@ -166,6 +170,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 lastError = null,
                 devices = emptyList(),
                 deviceDetails = "",
+                additionalDeviceDetails = "",
             )
         }
         worker.execute {
@@ -307,6 +312,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 connectionState = RadioConnectionState.CONNECTED,
                 lastError = null,
                 deviceDetails = formatDeviceInfo(info),
+                additionalDeviceDetails = formatAdditionalDeviceInfo(info),
                 sampleRateHz = rxRate,
                 automaticSampleRateHz = rxRate,
                 sampleRateOptions = rxRates.overrideOptions,
@@ -687,6 +693,9 @@ private fun formatDeviceInfo(info: RadioDeviceCapabilities) = buildString {
         append("\n\nHardware information")
         info.metadata.forEach { (key, value) -> append("\n$key: $value") }
     }
+    info.notReported.filterNot { it == "device settings" || it == "device sensors" }
+        .takeIf { it.isNotEmpty() }
+        ?.let { append("\nNot reported: ${it.joinToString()}") }
 }
 
 private fun formatCapabilities(label: String, capabilities: RadioChannelCapabilities) = buildString {
@@ -721,9 +730,64 @@ private fun formatCapabilities(label: String, capabilities: RadioChannelCapabili
     if (capabilities.bandwidthRanges.isNotEmpty()) {
         append("\nBandwidth ranges: ${capabilities.bandwidthRanges.displayRanges()}")
     }
-    if (capabilities.notReported.isNotEmpty()) {
-        append("\nNot reported: ${capabilities.notReported.joinToString()}")
+    capabilities.notReported.filterNot { it == "channel settings" || it == "channel sensors" }
+        .takeIf { it.isNotEmpty() }
+        ?.let { append("\nNot reported: ${it.joinToString()}") }
+}
+
+private fun formatAdditionalDeviceInfo(info: RadioDeviceCapabilities) = buildString {
+    append("Driver settings and sensors")
+    appendSettings("Device settings", info.settings, "device settings" in info.notReported)
+    appendSensors("Device sensors", info.sensors, "device sensors" in info.notReported)
+    info.allRx.forEachIndexed { channel, capabilities ->
+        append("\n\nRX $channel")
+        appendSettings("Channel settings", capabilities.settings, "channel settings" in capabilities.notReported)
+        appendSensors("Channel sensors", capabilities.sensors, "channel sensors" in capabilities.notReported)
     }
+    info.allTx.forEachIndexed { channel, capabilities ->
+        append("\n\nTX $channel")
+        appendSettings("Channel settings", capabilities.settings, "channel settings" in capabilities.notReported)
+        appendSensors("Channel sensors", capabilities.sensors, "channel sensors" in capabilities.notReported)
+    }
+}
+
+private fun StringBuilder.appendSettings(
+    label: String,
+    settings: List<RadioSetting>,
+    unsupported: Boolean,
+) {
+    append("\n$label: ${if (unsupported) "not reported" else if (settings.isEmpty()) "none" else ""}")
+    settings.forEach { setting ->
+        append("\n  ${setting.info.name.ifBlank { setting.info.key }} (${setting.info.key})")
+        appendArgumentDetails(setting.info)
+        append("; current ${setting.currentValue ?: "not reported"}")
+    }
+}
+
+private fun StringBuilder.appendSensors(
+    label: String,
+    sensors: List<RadioSensor>,
+    unsupported: Boolean,
+) {
+    append("\n$label: ${if (unsupported) "not reported" else if (sensors.isEmpty()) "none" else ""}")
+    sensors.forEach { sensor ->
+        append("\n  ${sensor.info?.name?.takeIf { it.isNotBlank() } ?: sensor.key} (${sensor.key})")
+        sensor.info?.let { appendArgumentDetails(it) }
+        append("; current ${sensor.currentValue ?: "not reported"}")
+        sensor.info?.units?.takeIf { it.isNotBlank() }?.let { append(" $it") }
+    }
+}
+
+private fun StringBuilder.appendArgumentDetails(info: RadioArgumentInfo) {
+    val type = listOf("boolean", "integer", "float", "string").getOrNull(info.type)
+        ?: "type ${info.type}"
+    append("; $type")
+    if (info.options.isNotEmpty()) append("; options ${info.options.joinToString()}")
+    else if (info.range.maximum > info.range.minimum) {
+        append("; range ${info.range.minimum}–${info.range.maximum}")
+        if (info.range.step > 0.0) append(" step ${info.range.step}")
+    }
+    if (info.value.isNotEmpty()) append("; default ${info.value}")
 }
 
 private fun Boolean?.reportedBoolean(): String = when (this) {

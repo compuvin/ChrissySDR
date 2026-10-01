@@ -93,6 +93,7 @@ class SoapyRpcWriter {
     }
 
     fun voidValue() = apply { type(RpcType.VOID) }
+    fun exception(message: String) = apply { type(RpcType.EXCEPTION); string(message) }
 
     fun frame(): SoapyRpcFrame = SoapyRpcFrame(payload = bytes.toByteArray())
     private fun type(type: RpcType) = output.writeByte(type.id)

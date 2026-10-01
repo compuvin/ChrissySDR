@@ -1,9 +1,12 @@
 package com.kb1jdx.chrissysdr.radio
 
 import com.kb1jdx.chrissysdr.soapyremote.SoapyChannelCapabilities
+import com.kb1jdx.chrissysdr.soapyremote.SoapyArgInfo
 import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteClient
 import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteRxSession
 import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteTxSession
+import com.kb1jdx.chrissysdr.soapyremote.SoapySensor
+import com.kb1jdx.chrissysdr.soapyremote.SoapySetting
 
 class SoapyRemoteBackend(
     private val client: SoapyRemoteClient = SoapyRemoteClient(),
@@ -36,6 +39,9 @@ class SoapyRemoteBackend(
             tx = info.txCapabilities?.toRadioCapabilities(),
             allRx = info.allRxCapabilities.map { it.toRadioCapabilities() },
             allTx = info.allTxCapabilities.map { it.toRadioCapabilities() },
+            settings = info.settings.map { it.toRadioSetting() },
+            sensors = info.sensors.map { it.toRadioSensor() },
+            notReported = info.notReported,
         )
     }
 
@@ -116,19 +122,7 @@ private fun SoapyChannelCapabilities.toRadioCapabilities() = RadioChannelCapabil
     formats = formats,
     nativeFormat = nativeFormat,
     nativeFullScale = nativeFullScale,
-    streamArgs = streamArgs.map { arg ->
-        RadioArgumentInfo(
-            key = arg.key,
-            value = arg.value,
-            name = arg.name,
-            description = arg.description,
-            units = arg.units,
-            type = arg.type,
-            range = RadioRange(arg.range.minimum, arg.range.maximum, arg.range.step),
-            options = arg.options,
-            optionNames = arg.optionNames,
-        )
-    },
+    streamArgs = streamArgs.map { it.toRadioArgumentInfo() },
     antennas = antennas,
     gains = gains,
     gainRanges = gainRanges.mapValues { (_, range) ->
@@ -142,4 +136,22 @@ private fun SoapyChannelCapabilities.toRadioCapabilities() = RadioChannelCapabil
     bandwidths = bandwidths,
     bandwidthRanges = bandwidthRanges.map { RadioRange(it.minimum, it.maximum, it.step) },
     notReported = notReported,
+    settings = settings.map { it.toRadioSetting() },
+    sensors = sensors.map { it.toRadioSensor() },
 )
+
+private fun SoapyArgInfo.toRadioArgumentInfo() = RadioArgumentInfo(
+    key = key,
+    value = value,
+    name = name,
+    description = description,
+    units = units,
+    type = type,
+    range = RadioRange(range.minimum, range.maximum, range.step),
+    options = options,
+    optionNames = optionNames,
+)
+
+private fun SoapySetting.toRadioSetting() = RadioSetting(info.toRadioArgumentInfo(), currentValue)
+
+private fun SoapySensor.toRadioSensor() = RadioSensor(key, info?.toRadioArgumentInfo(), currentValue)

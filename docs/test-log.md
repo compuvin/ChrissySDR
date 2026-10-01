@@ -12,6 +12,44 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-09-30 — 0.4.0 milestone release
+
+- **App version:** `0.4.0` debug/test build.
+- **Scope:** SoapyRemote capability and stream-format negotiation, connection
+  lifecycle hardening, driver settings/sensor discovery, and the Additional
+  Radio Info view.
+- **Device result:** The operator reported that the `0.4.0-beta.2` Additional
+  Radio Info layout looks good. The flex1500d and RTL-SDR Blog V4 devices
+  were also independently enumerated and probed through SoapyRemote; see
+  [radio inventory](soapyremote-radio-inventory-2026-09-30.md). No claim is
+  made that every 0.4 feature was retested on hardware after the final
+  version-label change.
+- **Automated result:** Final `0.4.0` unit tests and debug APK assembly passed.
+  APK identity verified as `com.kb1jdx.chrissysdr`, version code `9`,
+  version name `0.4.0`.
+
+## 2026-09-30 — Additional radio information view
+
+- **App version:** `0.4.0-beta.2` debug build.
+- **Scope:** Moved the newly discovered device and channel settings/sensors out of the main radio summary into an Additional Radio Info dialog. The button appears at the bottom of the summary only after selecting a connected radio.
+- **Automated result:** Unit tests and debug APK assembly passed.
+- **Device result:** Pending visual check with flex1500d and RTL-SDR.
+
+## 2026-09-30 — Driver settings and sensor discovery
+
+- **App version:** `0.4.0-beta.1` debug build.
+- **Scope:** Read-only device and per-channel settings (including type,
+  range/options, default, and current value) and sensors (metadata, units, and
+  current value). If a radio exposes SWR or forward-power sensors, they appear
+  in the device information. Values are snapshots at inspection, not live
+  transmit telemetry.
+- **Automated result:** Unit tests and debug APK assembly passed. Mock
+  SoapyRemote tests cover device settings, RX-channel settings, device SWR,
+  TX-channel forward power, and unsupported optional queries.
+- **Device result:** Pending. Reinspect available radios and confirm their
+  reported settings/sensors display without breaking RX. A radio with no
+  sensors should show none or not reported, not an inspection failure.
+
 ## 2026-09-30 — Upstream Soapy capability and format audit
 
 - **App version:** `0.3.0-beta.5` debug build.
@@ -29,7 +67,9 @@ individual experiments belong here instead.
   reply size, and reject trailing reply fields instead of silently ignoring
   protocol mismatches. Added format and frame tests.
 - **Automated result:** Unit tests and debug APK assembly passed.
-- **Device result:** Pending regression test with SoapyRemote hardware.
+- **Device result:** The operator reports that the app tested well on the last
+  `0.3.0-beta.5` build. The exact radio and individual test scenarios were not
+  specified for this regression report.
 
 ## 2026-09-30 — Connection and stream lifecycle hardening
 

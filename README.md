@@ -29,8 +29,9 @@ The current development build can:
 
 - Connect to a SoapyRemote server.
 - Discover and inspect attached Soapy devices.
-- Display RX and TX capabilities reported by the radio.
-- Open an RX stream using `CS16` or `CF32` samples.
+- Display RX and TX capabilities, driver settings, and sensor snapshots
+  reported by the radio.
+- Open an RX stream using `CS8`, `CS16`, or `CF32` samples.
 - Play an experimental AM receive stream through Android audio.
 - Send a confirmation-gated, 30-second experimental AM microphone transmission
   on radios that report compatible TX capabilities.

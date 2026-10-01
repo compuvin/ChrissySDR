@@ -28,7 +28,7 @@ class SoapyRemoteClientTest {
                         socket.getOutputStream().write(writer.frame().encode())
                         socket.getOutputStream().flush()
                     }
-                    repeat(45) {
+                    repeat(53) {
                         val reader = SoapyRpcReader(SoapyRpcFrame.readFrom(socket.getInputStream()).payload)
                         val call = reader.call()
                         calls += call
@@ -63,7 +63,7 @@ class SoapyRemoteClientTest {
                                     ) else emptyList(),
                                 ))
                             }
-                            304, 500, 700 -> {
+                            304, 500, 700, 1202 -> {
                                 queriedChannels += reader.char() to reader.int32()
                                 reply(SoapyRpcWriter().emptyStringList())
                             }
@@ -78,6 +78,12 @@ class SoapyRemoteClientTest {
                             203, 709 -> {
                                 queriedChannels += reader.char() to reader.int32()
                                 reply(SoapyRpcWriter().bool(false))
+                            }
+                            1402 -> reply(SoapyRpcWriter().argInfoList(emptyList()))
+                            1200 -> reply(SoapyRpcWriter().emptyStringList())
+                            1405 -> {
+                                queriedChannels += reader.char() to reader.int32()
+                                reply(SoapyRpcWriter().argInfoList(emptyList()))
                             }
                             2, 3 -> reply(SoapyRpcWriter().voidValue())
                             else -> error("Unexpected call $call")
@@ -110,13 +116,13 @@ class SoapyRemoteClientTest {
             assertEquals(listOf("16-bit", "32-bit"), info.allRxCapabilities[0].streamArgs.single().optionNames)
             assertEquals(
                 listOf(1 to 0, 1 to 1, 0 to 0),
-                queriedChannels.chunked(12).map { chunk -> chunk.first() },
+                queriedChannels.chunked(14).map { chunk -> chunk.first() },
             )
             assertEquals(
-                listOf(20, 1, 100, 101, 102, 202, 202) +
-                    listOf(700, 305, 304, 306, 500, 709, 203, 805, 902, 907, 905, 906) +
-                    listOf(700, 305, 304, 306, 500, 709, 203, 805, 902, 907, 905, 906) +
-                    listOf(700, 305, 304, 306, 500, 709, 203, 805, 902, 907, 905, 906) +
+                listOf(20, 1, 100, 101, 102, 1402, 1200, 202, 202) +
+                    listOf(700, 305, 1405, 1202, 304, 306, 500, 709, 203, 805, 902, 907, 905, 906) +
+                    listOf(700, 305, 1405, 1202, 304, 306, 500, 709, 203, 805, 902, 907, 905, 906) +
+                    listOf(700, 305, 1405, 1202, 304, 306, 500, 709, 203, 805, 902, 907, 905, 906) +
                     listOf(2, 3),
                 calls,
             )
