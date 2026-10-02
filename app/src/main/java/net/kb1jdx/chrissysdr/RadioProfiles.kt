@@ -1,6 +1,7 @@
 package com.kb1jdx.chrissysdr
 
 import android.content.Context
+import com.kb1jdx.chrissysdr.radio.RadioChannelCapabilities
 import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
@@ -26,6 +27,9 @@ data class RadioProfile(
     val bandwidth: String,
     val mode: String = "AM",
     val sampleRateOverrideHz: Double?,
+    val rxGains: Map<String, Double> = emptyMap(),
+    val rxHardwareAgc: Boolean? = null,
+    val rxAntenna: String? = null,
 )
 
 @Entity(tableName = "radio_profiles")
@@ -40,6 +44,9 @@ data class RadioProfileEntity(
     val bandwidth: String,
     @ColumnInfo(defaultValue = "'AM'") val mode: String,
     val sampleRateOverrideHz: Double?,
+    @ColumnInfo(defaultValue = "'{}'") val rxGainsJson: String,
+    val rxHardwareAgc: Boolean?,
+    val rxAntenna: String?,
 )
 
 @Dao
@@ -55,7 +62,7 @@ interface RadioProfileDao {
 
 }
 
-@Database(entities = [RadioProfileEntity::class], version = 2, exportSchema = true)
+@Database(entities = [RadioProfileEntity::class], version = 3, exportSchema = true)
 abstract class ChrissyDatabase : RoomDatabase() {
     abstract fun radioProfiles(): RadioProfileDao
 
@@ -66,13 +73,20 @@ abstract class ChrissyDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE radio_profiles ADD COLUMN mode TEXT NOT NULL DEFAULT 'AM'")
             }
         }
+        private val migration2To3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE radio_profiles ADD COLUMN rxGainsJson TEXT NOT NULL DEFAULT '{}'")
+                db.execSQL("ALTER TABLE radio_profiles ADD COLUMN rxHardwareAgc INTEGER")
+                db.execSQL("ALTER TABLE radio_profiles ADD COLUMN rxAntenna TEXT")
+            }
+        }
 
         fun get(context: Context): ChrissyDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 ChrissyDatabase::class.java,
                 "chrissysdr.db",
-            ).addMigrations(migration1To2).build().also { instance = it }
+            ).addMigrations(migration1To2, migration2To3).build().also { instance = it }
         }
     }
 }
@@ -88,10 +102,14 @@ fun RadioProfile.toEntity() = RadioProfileEntity(
     bandwidth = bandwidth,
     mode = mode,
     sampleRateOverrideHz = sampleRateOverrideHz,
+    rxGainsJson = JSONObject(rxGains).toString(),
+    rxHardwareAgc = rxHardwareAgc,
+    rxAntenna = rxAntenna,
 )
 
 fun RadioProfileEntity.toProfile(): RadioProfile {
     val json = JSONObject(deviceArgumentsJson)
+    val gains = JSONObject(rxGainsJson)
     return RadioProfile(
         id = id,
         name = name,
@@ -103,8 +121,34 @@ fun RadioProfileEntity.toProfile(): RadioProfile {
         bandwidth = bandwidth,
         mode = mode,
         sampleRateOverrideHz = sampleRateOverrideHz,
+        rxGains = gains.keys().asSequence().associateWith { gains.getDouble(it) },
+        rxHardwareAgc = rxHardwareAgc,
+        rxAntenna = rxAntenna,
     )
 }
+
+internal data class SavedRxControls(
+    val gains: Map<String, Double>,
+    val hardwareAgc: Boolean?,
+    val antenna: String?,
+)
+
+/** Ignore saved controls that the currently selected device no longer advertises. */
+internal fun supportedSavedRxControls(
+    profile: RadioProfile,
+    capabilities: RadioChannelCapabilities?,
+): SavedRxControls = SavedRxControls(
+    gains = profile.rxGains.mapNotNull { (name, value) ->
+        val range = capabilities?.gainRanges?.get(name)
+        if (range != null && value.isFinite() && value in range.minimum..range.maximum) {
+            name to value
+        } else null
+    }.toMap(),
+    hardwareAgc = profile.rxHardwareAgc.takeIf {
+        capabilities?.automaticGain == true && capabilities.currentGainMode != null
+    },
+    antenna = profile.rxAntenna?.takeIf { it in capabilities?.antennas.orEmpty() },
+)
 
 /** A saved profile may only select an unambiguous radio on its saved server. */
 internal fun matchProfileDevice(

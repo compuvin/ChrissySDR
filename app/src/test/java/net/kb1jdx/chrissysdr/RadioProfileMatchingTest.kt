@@ -1,5 +1,7 @@
 package com.kb1jdx.chrissysdr
 
+import com.kb1jdx.chrissysdr.radio.RadioChannelCapabilities
+import com.kb1jdx.chrissysdr.radio.RadioRange
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -41,5 +43,30 @@ class RadioProfileMatchingTest {
         val saved = mapOf("driver" to "flex1500", "host" to "127.0.0.1", "port" to "15000", "label" to "Old")
         val radio = RadioDeviceChoice("New", saved + ("label" to "New"))
         assertEquals(radio, matchProfileDevice(profile(saved), listOf(radio)))
+    }
+
+    @Test fun savedRxControlsRestoreOnlyWhenStillAdvertised() {
+        val saved = profile(emptyMap()).copy(
+            rxGains = mapOf("LNA" to 12.0, "VGA" to 90.0),
+            rxHardwareAgc = false,
+            rxAntenna = "RX2",
+        )
+        val capabilities = RadioChannelCapabilities(
+            formats = emptyList(), nativeFormat = null, nativeFullScale = null,
+            streamArgs = emptyList(), antennas = listOf("RX1", "RX2"),
+            gains = listOf("LNA", "VGA"),
+            gainRanges = mapOf("LNA" to RadioRange(0.0, 30.0, 1.0),
+                "VGA" to RadioRange(0.0, 50.0, 1.0)),
+            currentGainMode = true, automaticGain = true, fullDuplex = null,
+            frequencyRanges = emptyList(), sampleRates = emptyList(),
+            sampleRateRanges = emptyList(), bandwidths = emptyList(),
+            bandwidthRanges = emptyList(), notReported = emptySet(),
+        )
+        assertEquals(
+            SavedRxControls(mapOf("LNA" to 12.0), false, "RX2"),
+            supportedSavedRxControls(saved, capabilities),
+        )
+        assertEquals(SavedRxControls(emptyMap(), null, null),
+            supportedSavedRxControls(saved, null))
     }
 }

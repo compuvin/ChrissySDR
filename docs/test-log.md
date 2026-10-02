@@ -12,6 +12,20 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-02 — Explicit profile persistence for RX controls
+
+- **App version:** `0.5.2-dev.10` local debug build; not published.
+- **Scope:** Save/Update radio profile now includes named RX gains, Radio AGC,
+  and RX antenna alongside the existing server, device, frequency, mode,
+  filter, and sample-rate override. Quick Connect restores supported saved
+  controls before starting RX. Room migration 2→3 preserves existing profiles;
+  unsupported saved controls are skipped when a radio's capabilities change.
+  The TX unknown-range override remains saved per radio. Saving is explicit;
+  app startup never automatically reconnects or keys hardware.
+- **Device result:** Pending live-radio test of saving, restarting the app,
+  loading the profile, and confirming restored RX controls.
+- **Automated result:** Room code generation, debug build, and unit tests passed.
+
 ## 2026-10-02 — In-app diagnostics
 
 - **App version:** `0.5.2-dev.9` local debug build; not published.

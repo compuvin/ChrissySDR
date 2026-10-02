@@ -161,6 +161,10 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             bandwidth = snapshot.bandwidth,
             mode = snapshot.mode,
             sampleRateOverrideHz = if (snapshot.sampleRateAutomatic) null else snapshot.sampleRateHz,
+            rxGains = (snapshot.rxGainValues + rxGainOverrides).filterValues { it.isFinite() },
+            rxHardwareAgc = (rxHardwareAgcOverride ?: snapshot.rxHardwareAgc)
+                .takeIf { snapshot.rxHardwareAgcSupported },
+            rxAntenna = rxAntennaOverride ?: snapshot.rxAntenna,
         )
         mutableState.update { it.copy(savingProfile = true, profileStatus = "Saving ${profile.name}…") }
         worker.execute {
@@ -226,6 +230,17 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val info = service.inspect(RadioEndpoint(profile.host, profile.port), choice.arguments)
                 configureDevice(profile.host, profile.port, choice, info)
+                val savedControls = supportedSavedRxControls(profile, info.rx)
+                rxGainOverrides = savedControls.gains
+                rxHardwareAgcOverride = savedControls.hardwareAgc
+                rxAntennaOverride = savedControls.antenna
+                mutableState.update {
+                    it.copy(
+                        rxGainValues = it.rxGainValues + rxGainOverrides,
+                        rxHardwareAgc = rxHardwareAgcOverride ?: it.rxHardwareAgc,
+                        rxAntenna = rxAntennaOverride ?: it.rxAntenna,
+                    )
+                }
                 profile.sampleRateOverrideHz?.let { savedRate ->
                     if (savedRate in mutableState.value.sampleRateOptions) selectSampleRate(savedRate)
                 }

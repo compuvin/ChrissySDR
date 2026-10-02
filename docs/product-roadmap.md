@@ -71,8 +71,8 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
   - [ ] Audio focus handling.
   - [ ] Headphone/Bluetooth route-change handling.
   - [ ] Reliable cleanup on app removal, service stop, connection loss, or radio error.
-- [ ] Persist the last server, port, device, frequency, mode, filter, gains, and advanced overrides locally.
-- [ ] Add reconnect and restore-session behavior, without automatically reopening or keying hardware after an app restart.
+- [x] Persist the last server, port, device, frequency, mode, filter, gains, and advanced overrides locally.
+- [x] Add reconnect and restore-session behavior, without automatically reopening or keying hardware after an app restart.
 - [x] Provide an in-app diagnostics view with copy/share support for:
   - [x] Server and device information.
   - [x] Negotiated format/rate/bandwidth.
