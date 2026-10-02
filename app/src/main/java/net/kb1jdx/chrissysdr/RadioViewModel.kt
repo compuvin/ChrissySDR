@@ -22,6 +22,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.UUID
+import java.math.BigDecimal
+import kotlin.math.round
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,6 +70,12 @@ data class RadioUiState(
     val spectrumRangeDb: Int = 120,
     val spectrumSpanHz: Double? = null,
     val tuningStepHz: Double = 100.0,
+    val rxGainRanges: Map<String, RadioRange> = emptyMap(),
+    val rxGainValues: Map<String, Double> = emptyMap(),
+    val rxHardwareAgcSupported: Boolean = false,
+    val rxHardwareAgc: Boolean? = null,
+    val rxAntennas: List<String> = emptyList(),
+    val rxAntenna: String? = null,
     val txAvailable: Boolean = false,
     val txActive: Boolean = false,
     val txBusy: Boolean = false,
@@ -91,6 +99,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     private var selectedDevice: Map<String, String>? = null
     private var selectedRxFormat: StreamFormatChoice? = null
     private var selectedRxCapabilities: RadioChannelCapabilities? = null
+    private var rxGainOverrides: Map<String, Double> = emptyMap()
+    private var rxHardwareAgcOverride: Boolean? = null
+    private var rxAntennaOverride: String? = null
     private var selectedTxFormat: StreamFormatChoice? = null
     private var selectedTxSampleRate: Double? = null
     private var selectedTxCapabilities: RadioChannelCapabilities? = null
@@ -181,12 +192,18 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         connectionStatus = "Connecting to ${profile.name}…",
                         rxActive = false, rxBusy = false, rxStatus = "Opening saved radio…",
                         rxAvailable = false, txAvailable = false,
+                        rxGainRanges = emptyMap(), rxGainValues = emptyMap(),
+                        rxHardwareAgcSupported = false, rxHardwareAgc = null,
+                        rxAntennas = emptyList(), rxAntenna = null,
                         activeProfileId = null, profileName = profile.name,
                     )
                 }
                 selectedDevice = null
                 selectedHost = null
                 selectedRxCapabilities = null
+                rxGainOverrides = emptyMap()
+                rxHardwareAgcOverride = null
+                rxAntennaOverride = null
                 selectedTxCapabilities = null
                 val discovery = service.discover(RadioEndpoint(profile.host, profile.port))
                 val devices = discovery.devices.map { RadioDeviceChoice(it.label, it.arguments) }
@@ -277,6 +294,54 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     fun setTuningStepHz(value: Double) {
         if (value !in TUNING_STEPS_HZ) return
         mutableState.update { it.copy(tuningStepHz = value) }
+    }
+    fun setRxGain(name: String, value: Double) {
+        val snapshot = mutableState.value
+        val range = snapshot.rxGainRanges[name] ?: return
+        if (!value.isFinite() || value !in range.minimum..range.maximum ||
+            (snapshot.rxHardwareAgcSupported && snapshot.rxHardwareAgc != false) ||
+            snapshot.txActive || snapshot.txBusy || snapshot.rxBusy
+        ) return
+        val applied = if (range.step.isFinite() && range.step > 0.0) {
+            (range.minimum + round((value - range.minimum) / range.step) * range.step)
+                .coerceIn(range.minimum, range.maximum)
+        } else value
+        rxGainOverrides = rxGainOverrides + (name to applied)
+        mutableState.update { it.copy(rxGainValues = it.rxGainValues + (name to applied)) }
+        if (snapshot.rxActive) startReceiver()
+    }
+    fun setRxHardwareAgc(enabled: Boolean) {
+        val snapshot = mutableState.value
+        if (!snapshot.rxHardwareAgcSupported || snapshot.rxHardwareAgc == null ||
+            snapshot.txActive || snapshot.txBusy || snapshot.rxBusy
+        ) return
+        rxHardwareAgcOverride = enabled
+        mutableState.update { it.copy(rxHardwareAgc = enabled) }
+        if (snapshot.rxActive) startReceiver()
+    }
+    fun setRxAntenna(name: String) {
+        val snapshot = mutableState.value
+        if (snapshot.rxAntennas.size < 2 || name !in snapshot.rxAntennas ||
+            snapshot.txActive || snapshot.txBusy || snapshot.rxBusy
+        ) return
+        rxAntennaOverride = name
+        mutableState.update { it.copy(rxAntenna = name) }
+        if (snapshot.rxActive) startReceiver()
+    }
+    fun stepFrequency(direction: Int) {
+        val snapshot = mutableState.value
+        if (snapshot.rxBusy || snapshot.txActive || snapshot.txBusy) return
+        val target = FrequencyStepPolicy.next(
+            snapshot.frequency.toDoubleOrNull() ?: Double.NaN,
+            snapshot.tuningStepHz,
+            direction,
+            selectedRxCapabilities?.frequencyRanges.orEmpty(),
+        )
+        if (target == null) {
+            mutableState.update { it.copy(rxStatus = "Frequency step is outside RX limits or the frequency is invalid") }
+            return
+        }
+        setFrequency(BigDecimal.valueOf(target).stripTrailingZeros().toPlainString())
     }
     fun tuneSpectrumTo(frequencyHz: Double) {
         val snapshot = mutableState.value
@@ -405,11 +470,17 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 selectedDeviceLabel = "",
                 rxAvailable = false,
                 txAvailable = false,
+                rxGainRanges = emptyMap(), rxGainValues = emptyMap(),
+                rxHardwareAgcSupported = false, rxHardwareAgc = null,
+                rxAntennas = emptyList(), rxAntenna = null,
             )
         }
         selectedDevice = null
         selectedHost = null
         selectedRxCapabilities = null
+        rxGainOverrides = emptyMap()
+        rxHardwareAgcOverride = null
+        rxAntennaOverride = null
         selectedTxCapabilities = null
         worker.execute {
             val service = radioService
@@ -503,6 +574,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         selectedRadioPreferenceKey = radioPreferenceKey
         val rxCapabilities = info.rx
         selectedRxCapabilities = rxCapabilities
+        rxGainOverrides = emptyMap()
+        rxHardwareAgcOverride = null
+        rxAntennaOverride = null
         selectedRxFormat = rxCapabilities.supportedFormat()
         val snapshot = mutableState.value
         val bandwidth = snapshot.bandwidth.toDoubleOrNull() ?: DEFAULT_AM_BANDWIDTH
@@ -565,6 +639,12 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 sampleRateOptions = rxRates.overrideOptions,
                 sampleRateAutomatic = true,
                 appliedSampleRateHz = null,
+                rxGainRanges = rxCapabilities?.gainRanges.orEmpty(),
+                rxGainValues = rxCapabilities?.currentGains.orEmpty(),
+                rxHardwareAgcSupported = rxCapabilities?.automaticGain == true,
+                rxHardwareAgc = rxCapabilities?.currentGainMode,
+                rxAntennas = rxCapabilities?.antennas.orEmpty(),
+                rxAntenna = rxCapabilities?.currentAntenna,
                 rxAvailable = selectedRxFormat != null && rxRate != null && bandwidthAvailable,
                 rxStatus = if (selectedRxFormat != null && rxRate != null && bandwidthAvailable) {
                     "${it.mode} RX ready (${selectedRxFormat!!.format}, ${formatHz(rxRate)}; hardware BW ${hardwareBandwidth?.let(::formatHz) ?: "not reported"})"
@@ -667,6 +747,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             sampleRate = sampleRate,
             format = format.format,
             fullScale = format.fullScale,
+            rxGains = rxGainOverrides,
+            rxAntenna = rxAntennaOverride,
+            rxHardwareAgc = rxHardwareAgcOverride,
         )
         val generation = rxGeneration.incrementAndGet()
         radioService?.cancelPendingReceiver()

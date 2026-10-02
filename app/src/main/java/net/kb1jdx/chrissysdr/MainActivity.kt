@@ -52,6 +52,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -73,6 +74,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -166,6 +169,7 @@ class MainActivity : ComponentActivity() {
                     onHostChanged = radio::setHost,
                     onPortChanged = radio::setPort,
                     onFrequencyChanged = radio::setFrequency,
+                    onStepFrequency = radio::stepFrequency,
                     onBandwidthChanged = radio::setBandwidth,
                     onModeChanged = radio::setMode,
                     onSampleRateChanged = radio::selectSampleRate,
@@ -174,6 +178,9 @@ class MainActivity : ComponentActivity() {
                     onSpectrumRangeChanged = radio::setSpectrumRangeDb,
                     onSpectrumSpanChanged = radio::setSpectrumSpanHz,
                     onTuningStepChanged = radio::setTuningStepHz,
+                    onRxGainChanged = radio::setRxGain,
+                    onRxHardwareAgcChanged = radio::setRxHardwareAgc,
+                    onRxAntennaChanged = radio::setRxAntenna,
                     onSpectrumTune = radio::tuneSpectrumTo,
                     onAllowUnknownTxRange = radio::setAllowUnknownTxRange,
                     onDiscover = {
@@ -244,6 +251,7 @@ private fun RadioScreen(
     onHostChanged: (String) -> Unit,
     onPortChanged: (String) -> Unit,
     onFrequencyChanged: (String) -> Unit,
+    onStepFrequency: (Int) -> Unit,
     onBandwidthChanged: (String) -> Unit,
     onModeChanged: (String) -> Unit,
     onSampleRateChanged: (Double?) -> Unit,
@@ -252,6 +260,9 @@ private fun RadioScreen(
     onSpectrumRangeChanged: (Int) -> Unit,
     onSpectrumSpanChanged: (Double?) -> Unit,
     onTuningStepChanged: (Double) -> Unit,
+    onRxGainChanged: (String, Double) -> Unit,
+    onRxHardwareAgcChanged: (Boolean) -> Unit,
+    onRxAntennaChanged: (String) -> Unit,
     onSpectrumTune: (Double) -> Unit,
     onAllowUnknownTxRange: (Boolean) -> Unit,
     onDiscover: () -> Unit,
@@ -264,15 +275,26 @@ private fun RadioScreen(
     onTxPressed: () -> Boolean,
     onConfirmTx: () -> Unit,
 ) {
-    var settingsVisible by rememberSaveable { mutableStateOf(state.devices.isEmpty()) }
+    var activeSheet by rememberSaveable { mutableStateOf<RadioSheet?>(null) }
+    var quickConnectExpanded by remember { mutableStateOf(false) }
     var showTransmitConfirmation by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = RadioBackground,
         topBar = {
             RadioHeader(
-                connectionStatus = state.connectionStatus,
-                onSettings = { settingsVisible = true },
+                state = state,
+                quickConnectExpanded = quickConnectExpanded,
+                onQuickConnect = {
+                    if (state.profiles.isEmpty()) activeSheet = RadioSheet.SETTINGS
+                    else quickConnectExpanded = true
+                },
+                onDismissQuickConnect = { quickConnectExpanded = false },
+                onLoadProfile = { id ->
+                    quickConnectExpanded = false
+                    onLoadProfile(id)
+                },
+                onSettings = { activeSheet = RadioSheet.SETTINGS },
             )
         },
         bottomBar = {
@@ -282,7 +304,7 @@ private fun RadioScreen(
                 transmitting = state.txActive,
                 txBusy = state.txBusy,
                 txAvailable = state.txAvailable,
-                onOpenSettings = { settingsVisible = true },
+                onOpenControls = { activeSheet = RadioSheet.OPERATING },
                 onTx = {
                     if (state.txActive) {
                         onTxPressed()
@@ -311,37 +333,47 @@ private fun RadioScreen(
         }
     }
 
-    if (settingsVisible) {
+    if (activeSheet != null) {
         ModalBottomSheet(
-            onDismissRequest = { settingsVisible = false },
+            onDismissRequest = { activeSheet = null },
             containerColor = RadioPanel,
         ) {
-            SettingsSheet(
-                state = state,
-                version = version,
-                onHostChanged = onHostChanged,
-                onPortChanged = onPortChanged,
-                onFrequencyChanged = onFrequencyChanged,
-                onBandwidthChanged = onBandwidthChanged,
-                onModeChanged = onModeChanged,
-                onSampleRateChanged = onSampleRateChanged,
-                onSpectrumAveragingChanged = onSpectrumAveragingChanged,
-                onSpectrumFloorChanged = onSpectrumFloorChanged,
-                onSpectrumRangeChanged = onSpectrumRangeChanged,
-                onSpectrumSpanChanged = onSpectrumSpanChanged,
-                onTuningStepChanged = onTuningStepChanged,
-                onAllowUnknownTxRange = onAllowUnknownTxRange,
-                onDiscover = onDiscover,
-                onInspect = onInspect,
-                onProfileNameChanged = onProfileNameChanged,
-                onSaveProfile = onSaveProfile,
-                onLoadProfile = { id ->
-                    onLoadProfile(id)
-                    settingsVisible = false
-                },
-                onStartRx = onStartRx,
-                onStopRx = onStopRx,
-            )
+            when (activeSheet) {
+                RadioSheet.OPERATING -> OperatingControlsSheet(
+                    state = state,
+                    onFrequencyChanged = onFrequencyChanged,
+                    onStepFrequency = onStepFrequency,
+                    onBandwidthChanged = onBandwidthChanged,
+                    onModeChanged = onModeChanged,
+                    onTuningStepChanged = onTuningStepChanged,
+                    onRxGainChanged = onRxGainChanged,
+                    onRxHardwareAgcChanged = onRxHardwareAgcChanged,
+                    onSpectrumSpanChanged = onSpectrumSpanChanged,
+                    onStartRx = onStartRx,
+                    onStopRx = onStopRx,
+                )
+                RadioSheet.SETTINGS -> SettingsSheet(
+                    state = state,
+                    version = version,
+                    onHostChanged = onHostChanged,
+                    onPortChanged = onPortChanged,
+                    onSampleRateChanged = onSampleRateChanged,
+                    onRxAntennaChanged = onRxAntennaChanged,
+                    onSpectrumAveragingChanged = onSpectrumAveragingChanged,
+                    onSpectrumFloorChanged = onSpectrumFloorChanged,
+                    onSpectrumRangeChanged = onSpectrumRangeChanged,
+                    onAllowUnknownTxRange = onAllowUnknownTxRange,
+                    onDiscover = onDiscover,
+                    onInspect = onInspect,
+                    onProfileNameChanged = onProfileNameChanged,
+                    onSaveProfile = onSaveProfile,
+                    onLoadProfile = { id ->
+                        onLoadProfile(id)
+                        activeSheet = null
+                    },
+                )
+                null -> Unit
+            }
         }
     }
 
@@ -371,8 +403,17 @@ private fun RadioScreen(
     }
 }
 
+private enum class RadioSheet { OPERATING, SETTINGS }
+
 @Composable
-private fun RadioHeader(connectionStatus: String, onSettings: () -> Unit) {
+private fun RadioHeader(
+    state: RadioUiState,
+    quickConnectExpanded: Boolean,
+    onQuickConnect: () -> Unit,
+    onDismissQuickConnect: () -> Unit,
+    onLoadProfile: (String) -> Unit,
+    onSettings: () -> Unit,
+) {
     Surface(
         modifier = Modifier.statusBarsPadding(),
         color = RadioPanel,
@@ -384,18 +425,53 @@ private fun RadioHeader(connectionStatus: String, onSettings: () -> Unit) {
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("ChrissySDR", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    connectionStatus,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                )
+            Box(modifier = Modifier.weight(1f)) {
+                Column(modifier = Modifier.fillMaxWidth().clickable(onClick = onQuickConnect)) {
+                    Text("ChrissySDR", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        headerRadioLabel(state),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                    )
+                }
+                DropdownMenu(
+                    expanded = quickConnectExpanded,
+                    onDismissRequest = onDismissQuickConnect,
+                ) {
+                    state.profiles.forEach { profile ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(profile.name)
+                                    Text("${profile.host}:${profile.port} • ${profile.deviceLabel}",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            },
+                            onClick = { onLoadProfile(profile.id) },
+                            enabled = !state.loadingProfile && !state.savingProfile &&
+                                !state.discovering && !state.inspecting &&
+                                !state.txActive && !state.txBusy,
+                        )
+                    }
+                }
             }
             TextButton(onClick = onSettings) { Text("SETTINGS") }
         }
     }
+}
+
+internal fun headerRadioLabel(state: RadioUiState): String = when {
+    state.loadingProfile -> state.profileStatus
+    state.connectionState == RadioConnectionState.CONNECTING -> state.connectionStatus
+    state.connectionState == RadioConnectionState.RECONNECTING -> state.connectionStatus
+    state.rxActive && state.activeProfileId != null -> state.profileName
+    state.rxActive && state.selectedDeviceLabel.isNotBlank() -> state.selectedDeviceLabel
+    state.connectionState == RadioConnectionState.CONNECTED &&
+        state.selectedDeviceLabel.isNotBlank() -> "${state.selectedDeviceLabel} • RX stopped"
+    state.connectionState == RadioConnectionState.FAILED -> state.connectionStatus
+    else -> "No radio connected — tap to connect"
 }
 
 @Composable
@@ -570,7 +646,7 @@ private fun OperatingBar(
     transmitting: Boolean,
     txBusy: Boolean,
     txAvailable: Boolean,
-    onOpenSettings: () -> Unit,
+    onOpenControls: () -> Unit,
     onTx: () -> Unit,
 ) {
     Surface(color = RadioPanel, tonalElevation = 8.dp) {
@@ -580,7 +656,7 @@ private fun OperatingBar(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(
-                modifier = Modifier.weight(1f).clickable(onClick = onOpenSettings),
+                modifier = Modifier.weight(1f).clickable(onClick = onOpenControls),
                 horizontalAlignment = Alignment.Start,
             ) {
                 Text("FREQUENCY", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -606,97 +682,76 @@ private fun OperatingBar(
                 Text(if (transmitting) "STOP" else "TX", fontWeight = FontWeight.Black)
             }
             Column(
-                modifier = Modifier.weight(1f).clickable(onClick = onOpenSettings),
+                modifier = Modifier.weight(1f).clickable(onClick = onOpenControls),
                 horizontalAlignment = Alignment.End,
             ) {
                 Text("MODE", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(mode, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = SpectrumTrace)
-                Text("Pull up controls", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Tap for controls", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
 }
 
 @Composable
-private fun SettingsSheet(
+private fun OperatingControlsSheet(
     state: RadioUiState,
-    version: String,
-    onHostChanged: (String) -> Unit,
-    onPortChanged: (String) -> Unit,
     onFrequencyChanged: (String) -> Unit,
+    onStepFrequency: (Int) -> Unit,
     onBandwidthChanged: (String) -> Unit,
     onModeChanged: (String) -> Unit,
-    onSampleRateChanged: (Double?) -> Unit,
-    onSpectrumAveragingChanged: (Float) -> Unit,
-    onSpectrumFloorChanged: (Int) -> Unit,
-    onSpectrumRangeChanged: (Int) -> Unit,
-    onSpectrumSpanChanged: (Double?) -> Unit,
     onTuningStepChanged: (Double) -> Unit,
-    onAllowUnknownTxRange: (Boolean) -> Unit,
-    onDiscover: () -> Unit,
-    onInspect: (RadioDeviceChoice) -> Unit,
-    onProfileNameChanged: (String) -> Unit,
-    onSaveProfile: () -> Unit,
-    onLoadProfile: (String) -> Unit,
+    onRxGainChanged: (String, Double) -> Unit,
+    onRxHardwareAgcChanged: (Boolean) -> Unit,
+    onSpectrumSpanChanged: (Double?) -> Unit,
     onStartRx: () -> Unit,
     onStopRx: () -> Unit,
 ) {
-    var showUnknownRangeWarning by remember { mutableStateOf(false) }
-    var showAdditionalRadioInfo by remember { mutableStateOf(false) }
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .fillMaxHeight(0.9f)
+        modifier = Modifier.fillMaxWidth().fillMaxHeight(0.75f)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 8.dp),
     ) {
-        Text("Radio controls", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        Text(
-            "Frequency and mode remain visible in the operating bar.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        HorizontalDivider(Modifier.padding(vertical = 16.dp))
-        Text("Saved radios", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        if (state.profiles.isEmpty()) {
-            Text("No radio profiles saved yet.", fontSize = 12.sp)
-        }
-        state.profiles.forEach { profile ->
-            Button(
-                onClick = { onLoadProfile(profile.id) },
-                enabled = !state.savingProfile && !state.loadingProfile && !state.discovering && !state.inspecting &&
-                    !state.txActive && !state.txBusy,
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-            ) { Text("${profile.name} • ${profile.host}:${profile.port}") }
-        }
-        if (state.loadingProfile || state.profileStatus.isNotBlank()) {
-            Text(state.profileStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
-        }
-        HorizontalDivider(Modifier.padding(vertical = 16.dp))
+        Text("Operating controls", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text("Tune and adjust the current receiver.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(18.dp))
-        OutlinedTextField(
-            value = state.frequency,
-            onValueChange = onFrequencyChanged,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Frequency (Hz)") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-        )
-        Spacer(Modifier.height(10.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             OutlinedTextField(
-                value = state.bandwidth,
-                onValueChange = onBandwidthChanged,
+                value = state.frequency,
+                onValueChange = onFrequencyChanged,
                 modifier = Modifier.weight(1f),
-                label = { Text(if (state.mode == "AM") "AM RF width (Hz)" else "SSB passband (Hz)") },
+                label = { Text("Frequency (Hz)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
             )
-            SampleRateSelector(
-                state = state,
-                onSelected = onSampleRateChanged,
-                modifier = Modifier.weight(1f),
-            )
+            val canStep = !state.txActive && !state.txBusy && !state.rxBusy
+            OutlinedButton(
+                onClick = { onStepFrequency(-1) },
+                enabled = canStep,
+                modifier = Modifier.width(44.dp).semantics {
+                    contentDescription = "Decrease frequency by ${formatHz(state.tuningStepHz)}"
+                },
+                contentPadding = PaddingValues(0.dp),
+            ) { Text("▼") }
+            OutlinedButton(
+                onClick = { onStepFrequency(1) },
+                enabled = canStep,
+                modifier = Modifier.width(44.dp).semantics {
+                    contentDescription = "Increase frequency by ${formatHz(state.tuningStepHz)}"
+                },
+                contentPadding = PaddingValues(0.dp),
+            ) { Text("▲") }
         }
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = state.bandwidth,
+            onValueChange = onBandwidthChanged,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text(if (state.mode == "AM") "AM RF width (Hz)" else "SSB passband (Hz)") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            singleLine = true,
+        )
         Spacer(Modifier.height(12.dp))
         val rxCanStop = state.rxActive || state.rxBusy ||
             state.connectionState == RadioConnectionState.RECONNECTING
@@ -721,10 +776,7 @@ private fun SettingsSheet(
                     listOf("AM", "USB", "LSB").forEach { mode ->
                         DropdownMenuItem(
                             text = { Text(mode) },
-                            onClick = {
-                                onModeChanged(mode)
-                                modeMenuExpanded = false
-                            },
+                            onClick = { onModeChanged(mode); modeMenuExpanded = false },
                         )
                     }
                 }
@@ -732,36 +784,179 @@ private fun SettingsSheet(
         }
         Text(state.rxStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
         state.appliedSampleRateHz?.let {
-            Text(
-                "Radio applied ${formatHz(it)}",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text("Radio applied ${formatHz(it)}", fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text(state.txStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+        HorizontalDivider(Modifier.padding(vertical = 16.dp))
+        TuningStepSelector(state.tuningStepHz, onTuningStepChanged)
+        if (state.rxHardwareAgcSupported) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Radio AGC", modifier = Modifier.weight(1f))
+                Switch(
+                    checked = state.rxHardwareAgc == true,
+                    onCheckedChange = onRxHardwareAgcChanged,
+                    enabled = state.rxHardwareAgc != null && !state.rxBusy && !state.txActive && !state.txBusy,
+                )
+            }
+            if (state.rxHardwareAgc == null) Text("Radio AGC state unavailable", fontSize = 12.sp)
+        }
+        state.rxGainRanges.forEach { (name, range) ->
+            val current = state.rxGainValues[name]
+            if (current != null && current.isFinite() && range.minimum.isFinite() &&
+                range.maximum.isFinite() && range.maximum > range.minimum &&
+                range.minimum.toFloat().isFinite() && range.maximum.toFloat().isFinite()
+            ) {
+                var draft by remember(name, current) { mutableStateOf(current.toFloat()) }
+                Text("RX $name gain: %.1f dB".format(draft), fontSize = 13.sp)
+                Slider(
+                    value = draft.coerceIn(range.minimum.toFloat(), range.maximum.toFloat()),
+                    onValueChange = { draft = it },
+                    onValueChangeFinished = { onRxGainChanged(name, draft.toDouble()) },
+                    valueRange = range.minimum.toFloat()..range.maximum.toFloat(),
+                    enabled = (!state.rxHardwareAgcSupported || state.rxHardwareAgc == false) &&
+                        !state.rxBusy && !state.txActive && !state.txBusy,
+                )
+            }
+        }
+        if (state.rxHardwareAgc == true && state.rxGainRanges.isNotEmpty()) {
+            Text("Switch off Radio AGC to adjust gain", fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        SpectrumSpanSelector(state, onSpectrumSpanChanged)
+        Text("Tap the spectrum to select a signal; drag and release to tune.",
+            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun TuningStepSelector(stepHz: Double, onSelected: (Double) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }) {
+            Text("Tuning step: ${formatHz(stepHz)}")
+        }
+        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+            listOf(1.0, 10.0, 100.0, 1_000.0, 10_000.0).forEach { step ->
+                DropdownMenuItem(
+                    text = { Text(formatHz(step)) },
+                    onClick = { onSelected(step); expanded = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpectrumSpanSelector(state: RadioUiState, onSelected: (Double?) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val availableRate = minOf(state.appliedSampleRateHz ?: state.sampleRateHz ?: 48_000.0, 48_000.0)
+    val spans = listOf(null, 3_000.0, 6_000.0, 12_000.0, 24_000.0, 48_000.0)
+        .filter { it == null || it <= availableRate }
+    Box {
+        OutlinedButton(onClick = { expanded = true }) {
+            Text("Spectrum span: ${state.spectrumSpanHz?.let(::formatHz) ?: "auto"}")
+        }
+        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+            spans.forEach { span ->
+                DropdownMenuItem(
+                    text = { Text(span?.let(::formatHz) ?: "Auto") },
+                    onClick = { onSelected(span); expanded = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSheet(
+    state: RadioUiState,
+    version: String,
+    onHostChanged: (String) -> Unit,
+    onPortChanged: (String) -> Unit,
+    onSampleRateChanged: (Double?) -> Unit,
+    onRxAntennaChanged: (String) -> Unit,
+    onSpectrumAveragingChanged: (Float) -> Unit,
+    onSpectrumFloorChanged: (Int) -> Unit,
+    onSpectrumRangeChanged: (Int) -> Unit,
+    onAllowUnknownTxRange: (Boolean) -> Unit,
+    onDiscover: () -> Unit,
+    onInspect: (RadioDeviceChoice) -> Unit,
+    onProfileNameChanged: (String) -> Unit,
+    onSaveProfile: () -> Unit,
+    onLoadProfile: (String) -> Unit,
+) {
+    var showUnknownRangeWarning by remember { mutableStateOf(false) }
+    var showAdditionalRadioInfo by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(0.9f)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+    ) {
+        Text("Settings", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text("Configure radios, profiles, and the app.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        HorizontalDivider(Modifier.padding(vertical = 16.dp))
+        ConnectionSetupSection(
+            state = state,
+            onHostChanged = onHostChanged,
+            onPortChanged = onPortChanged,
+            onDiscover = onDiscover,
+            onInspect = onInspect,
+            onProfileNameChanged = onProfileNameChanged,
+            onSaveProfile = onSaveProfile,
+            onShowAdditionalRadioInfo = { showAdditionalRadioInfo = true },
+        )
+        HorizontalDivider(Modifier.padding(vertical = 16.dp))
+        Text("Saved radios", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        if (state.profiles.isEmpty()) {
+            Text("No radio profiles saved yet.", fontSize = 12.sp)
+        }
+        state.profiles.forEach { profile ->
+            Button(
+                onClick = { onLoadProfile(profile.id) },
+                enabled = !state.savingProfile && !state.loadingProfile && !state.discovering && !state.inspecting &&
+                    !state.txActive && !state.txBusy,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            ) { Text("${profile.name} • ${profile.host}:${profile.port}") }
+        }
+        if (state.loadingProfile || state.profileStatus.isNotBlank()) {
+            Text(state.profileStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+        }
+        HorizontalDivider(Modifier.padding(vertical = 16.dp))
+        Text("Advanced sample rate", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        SampleRateSelector(
+            state = state,
+            onSelected = onSampleRateChanged,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        )
+        if (state.rxAntennas.size > 1) {
+            var antennaExpanded by remember { mutableStateOf(false) }
+            Text("RX antenna", fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 14.dp))
+            Box {
+                OutlinedButton(
+                    onClick = { antennaExpanded = true },
+                    enabled = !state.rxBusy && !state.txActive && !state.txBusy,
+                ) { Text(state.rxAntenna ?: "Choose antenna") }
+                DropdownMenu(antennaExpanded, onDismissRequest = { antennaExpanded = false }) {
+                    state.rxAntennas.forEach { antenna ->
+                        DropdownMenuItem(
+                            text = { Text(antenna) },
+                            onClick = { onRxAntennaChanged(antenna); antennaExpanded = false },
+                        )
+                    }
+                }
+            }
+        }
 
         HorizontalDivider(Modifier.padding(vertical = 16.dp))
         Text("Spectrum", fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Text("Display controls do not change the radio stream.", fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            var spanExpanded by remember { mutableStateOf(false) }
-            val availableRate = minOf(state.appliedSampleRateHz ?: state.sampleRateHz ?: 48_000.0, 48_000.0)
-            val spans = listOf(null, 3_000.0, 6_000.0, 12_000.0, 24_000.0, 48_000.0)
-                .filter { it == null || it <= availableRate }
-            Box(Modifier.weight(1f)) {
-                OutlinedButton(onClick = { spanExpanded = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Span: ${state.spectrumSpanHz?.let(::formatHz) ?: "auto"}")
-                }
-                DropdownMenu(spanExpanded, onDismissRequest = { spanExpanded = false }) {
-                    spans.forEach { span ->
-                        DropdownMenuItem(
-                            text = { Text(span?.let(::formatHz) ?: "Auto") },
-                            onClick = { onSpectrumSpanChanged(span); spanExpanded = false },
-                        )
-                    }
-                }
-            }
             var averagingExpanded by remember { mutableStateOf(false) }
             Box(Modifier.weight(1f)) {
                 OutlinedButton(onClick = { averagingExpanded = true }, modifier = Modifier.fillMaxWidth()) {
@@ -813,23 +1008,6 @@ private fun SettingsSheet(
                 }
             }
         }
-        var tuningStepExpanded by remember { mutableStateOf(false) }
-        Box {
-            OutlinedButton(onClick = { tuningStepExpanded = true }) {
-                Text("Spectrum tuning step: ${formatHz(state.tuningStepHz)}")
-            }
-            DropdownMenu(tuningStepExpanded, onDismissRequest = { tuningStepExpanded = false }) {
-                listOf(1.0, 10.0, 100.0, 1_000.0, 10_000.0).forEach { step ->
-                    DropdownMenuItem(
-                        text = { Text(formatHz(step)) },
-                        onClick = { onTuningStepChanged(step); tuningStepExpanded = false },
-                    )
-                }
-            }
-        }
-        Text("Tap to select a signal; drag to pan, then release to tune.",
-            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
         if (state.txRangesUnreported) {
             HorizontalDivider(Modifier.padding(vertical = 20.dp))
             Text("Advanced transmit safety", fontSize = 18.sp, fontWeight = FontWeight.Bold)
@@ -856,82 +1034,6 @@ private fun SettingsSheet(
             }
         }
 
-        HorizontalDivider(Modifier.padding(vertical = 20.dp))
-        Text("SoapyRemote connection", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(10.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(
-                value = state.host,
-                onValueChange = onHostChanged,
-                modifier = Modifier.weight(2f),
-                label = { Text("LAN server") },
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = state.port,
-                onValueChange = onPortChanged,
-                modifier = Modifier.weight(1f),
-                label = { Text("Port") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-            )
-        }
-        Button(
-            onClick = onDiscover,
-            enabled = !state.discovering && !state.inspecting && !state.rxActive && !state.txActive,
-            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-        ) { Text(if (state.discovering) "Discovering…" else "Discover devices") }
-        Text(
-            state.connectionStatus,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(vertical = 8.dp),
-        )
-        state.devices.forEach { device ->
-            OutlinedButton(
-                onClick = { onInspect(device) },
-                enabled = !state.inspecting,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(device.label) }
-        }
-        if (state.selectedDeviceLabel.isNotBlank()) {
-            OutlinedTextField(
-                value = state.profileName,
-                onValueChange = onProfileNameChanged,
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                label = { Text("Radio profile name") },
-                singleLine = true,
-            )
-            Button(
-                onClick = onSaveProfile,
-                enabled = !state.savingProfile && !state.loadingProfile && !state.discovering && !state.inspecting &&
-                    state.profileName.isNotBlank(),
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-            ) {
-                Text(if (state.activeProfileId == null) "Save radio profile" else "Update radio profile")
-            }
-        }
-        if (state.deviceDetails.isNotBlank()) {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                colors = CardDefaults.cardColors(containerColor = SpectrumBackground),
-            ) {
-                Column(Modifier.padding(14.dp)) {
-                    Text(
-                        state.deviceDetails,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                    )
-                    if (state.connectionState == RadioConnectionState.CONNECTED &&
-                        state.additionalDeviceDetails.isNotBlank()
-                    ) {
-                        TextButton(onClick = { showAdditionalRadioInfo = true }) {
-                            Text("Additional Radio Info")
-                        }
-                    }
-                }
-            }
-        }
         Text(
             "ChrissySDR $version",
             modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
@@ -982,6 +1084,90 @@ private fun SettingsSheet(
                 ) { Text("I understand — enable") }
             },
         )
+    }
+}
+
+@Composable
+private fun ConnectionSetupSection(
+    state: RadioUiState,
+    onHostChanged: (String) -> Unit,
+    onPortChanged: (String) -> Unit,
+    onDiscover: () -> Unit,
+    onInspect: (RadioDeviceChoice) -> Unit,
+    onProfileNameChanged: (String) -> Unit,
+    onSaveProfile: () -> Unit,
+    onShowAdditionalRadioInfo: () -> Unit,
+) {
+    Text("SoapyRemote connection", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(10.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(
+            value = state.host,
+            onValueChange = onHostChanged,
+            modifier = Modifier.weight(2f),
+            label = { Text("LAN server") },
+            singleLine = true,
+        )
+        OutlinedTextField(
+            value = state.port,
+            onValueChange = onPortChanged,
+            modifier = Modifier.weight(1f),
+            label = { Text("Port") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+        )
+    }
+    Button(
+        onClick = onDiscover,
+        enabled = !state.discovering && !state.inspecting && !state.rxActive && !state.txActive,
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+    ) { Text(if (state.discovering) "Discovering…" else "Discover devices") }
+    Text(
+        state.connectionStatus,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontSize = 12.sp,
+        modifier = Modifier.padding(vertical = 8.dp),
+    )
+    state.devices.forEach { device ->
+        OutlinedButton(
+            onClick = { onInspect(device) },
+            enabled = !state.inspecting,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(device.label) }
+    }
+    if (state.selectedDeviceLabel.isNotBlank()) {
+        OutlinedTextField(
+            value = state.profileName,
+            onValueChange = onProfileNameChanged,
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            label = { Text("Radio profile name") },
+            singleLine = true,
+        )
+        Button(
+            onClick = onSaveProfile,
+            enabled = !state.savingProfile && !state.loadingProfile && !state.discovering && !state.inspecting &&
+                state.profileName.isNotBlank(),
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+        ) {
+            Text(if (state.activeProfileId == null) "Save radio profile" else "Update radio profile")
+        }
+    }
+    if (state.deviceDetails.isNotBlank()) {
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            colors = CardDefaults.cardColors(containerColor = SpectrumBackground),
+        ) {
+            Column(Modifier.padding(14.dp)) {
+                Text(state.deviceDetails, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                if (state.connectionState == RadioConnectionState.CONNECTED &&
+                    state.additionalDeviceDetails.isNotBlank()
+                ) {
+                    TextButton(onClick = onShowAdditionalRadioInfo) {
+                        Text("Additional Radio Info")
+                    }
+                }
+            }
+        }
     }
 }
 

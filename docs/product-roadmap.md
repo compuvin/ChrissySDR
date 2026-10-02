@@ -59,8 +59,8 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
   - [x] Spectrum occupies the main area.
   - [x] Persistent bottom bar shows current frequency and mode.
   - [x] Central TX button is visible but disabled and marked unavailable.
-  - [ ] Tapping frequency digits permits step-aware tuning.
-  - [ ] Pulling up the bottom sheet exposes frequency, mode, filter width, tuning step, gain/AGC, antenna, spectrum span, and advanced sample-rate selection.
+  - [x] Tapping frequency digits permits step-aware tuning.
+  - [x] Pulling up the bottom sheet exposes frequency, mode, filter width, tuning step, gain/AGC, antenna, spectrum span, and advanced sample-rate selection.
 - [ ] Clamp all controls to advertised radio capabilities and explain unavailable controls.
 
 ### 0.6 — Complete Receiver Release

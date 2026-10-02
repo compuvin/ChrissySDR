@@ -36,6 +36,8 @@ The current development build can:
   previously established RX stream after a connection interruption.
 - Save named radio profiles locally and load one to connect and start RX in a
   single tap (hardware testing pending).
+- Use the header for quick connection to a saved radio, the bottom frequency or
+  mode area for operating controls, and SETTINGS for radio/app configuration.
 - Play an experimental AM receive stream through Android audio.
 - Default AM to a 6 kHz RF passband, with manual adjustment available.
 - Receive USB and LSB voice with a default 3 kHz sideband passband and
@@ -60,6 +62,9 @@ provides test APKs. The `0.5.1` APK is debug-signed for testing; it is not a
 production-signed or Play Store build.
 
 ## Screenshots
+
+These screenshots show an earlier development layout; the operating controls
+and Settings are now separate.
 
 | Main receiver | Radio controls |
 | --- | --- |

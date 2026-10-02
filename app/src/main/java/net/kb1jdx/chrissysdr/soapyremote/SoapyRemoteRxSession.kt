@@ -224,6 +224,9 @@ class SoapyRemoteRxSession private constructor(
         private const val DEACTIVATE_STREAM = 303
         private const val SET_FREQUENCY = 800
         private const val SET_BANDWIDTH = 903
+        private const val SET_ANTENNA = 501
+        private const val SET_GAIN_MODE = 701
+        private const val SET_GAIN_ELEMENT = 704
         private const val STREAM_HEADER_BYTES = 24
         private const val MTU = 4096
         private const val SOCKET_WINDOW = 1_048_576
@@ -247,6 +250,9 @@ class SoapyRemoteRxSession private constructor(
             format: String,
             fullScale: Double,
             mode: String,
+            rxGains: Map<String, Double>,
+            rxAntenna: String?,
+            rxHardwareAgc: Boolean?,
             cancellation: RadioOpenCancellation,
         ): SoapyRemoteRxSession {
             require(sampleRate >= MIN_RADIO_SAMPLE_RATE) { "Sample rate must be at least 8000 Hz" }
@@ -274,6 +280,20 @@ class SoapyRemoteRxSession private constructor(
                 transact(
                     SoapyRpcWriter().call(SET_SAMPLE_RATE).char(RX).int32(0).float64(sampleRate),
                 ) { it.requireVoid() }
+                rxAntenna?.let { antenna ->
+                    transact(SoapyRpcWriter().call(SET_ANTENNA).char(RX).int32(0).string(antenna)) {
+                        it.requireVoid()
+                    }
+                }
+                rxHardwareAgc?.let { enabled ->
+                    transact(SoapyRpcWriter().call(SET_GAIN_MODE).char(RX).int32(0).bool(enabled)) {
+                        it.requireVoid()
+                    }
+                }
+                if (rxHardwareAgc != true) rxGains.forEach { (name, gain) ->
+                    transact(SoapyRpcWriter().call(SET_GAIN_ELEMENT).char(RX).int32(0)
+                        .string(name).float64(gain)) { it.requireVoid() }
+                }
                 transact(
                     SoapyRpcWriter().call(SET_FREQUENCY).char(RX).int32(0)
                         .float64(frequencyHz).kwargs(emptyMap()),

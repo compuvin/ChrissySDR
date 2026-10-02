@@ -32,6 +32,9 @@ data class SoapyChannelCapabilities(
     val antennas: List<String>,
     val gains: List<String>,
     val gainRanges: Map<String, SoapyRange>,
+    val currentGains: Map<String, Double> = emptyMap(),
+    val currentAntenna: String? = null,
+    val currentGainMode: Boolean? = null,
     val automaticGain: Boolean?,
     val fullDuplex: Boolean?,
     val frequencyRanges: List<SoapyRange>,
@@ -146,6 +149,17 @@ class SoapyRemoteClient(
                 transact(socket, request(GET_GAIN_ELEMENT_RANGE).string(name)) { it.range() }
             }?.let { name to it }
         }.toMap()
+        val currentGains = gains.mapNotNull { name ->
+            optional("gain value: $name", null) {
+                transact(socket, request(GET_GAIN_ELEMENT).string(name)) { it.float64() }
+            }?.let { name to it }
+        }.toMap()
+        val antennas = optional("antennas", emptyList()) {
+            transact(socket, request(LIST_ANTENNAS)) { it.stringList() }
+        }
+        val automaticGain = optional("automatic gain", null) {
+            transact(socket, request(HAS_GAIN_MODE)) { it.bool() }
+        }
         val nativeFormat = optional("native stream format and full scale", null) {
             transact(socket, request(GET_NATIVE_STREAM_FORMAT)) { reader ->
                 reader.string() to reader.float64()
@@ -178,14 +192,17 @@ class SoapyRemoteClient(
             streamArgs = optional("stream arguments", emptyList()) {
                 transact(socket, request(GET_STREAM_ARGS_INFO)) { it.argInfoList() }
             },
-            antennas = optional("antennas", emptyList()) {
-                transact(socket, request(LIST_ANTENNAS)) { it.stringList() }
-            },
+            antennas = antennas,
             gains = gains,
             gainRanges = gainRanges,
-            automaticGain = optional("automatic gain", null) {
-                transact(socket, request(HAS_GAIN_MODE)) { it.bool() }
-            },
+            currentGains = currentGains,
+            currentAntenna = if (antennas.size > 1) optional("selected antenna", null) {
+                transact(socket, request(GET_ANTENNA)) { it.string() }
+            } else antennas.singleOrNull(),
+            automaticGain = automaticGain,
+            currentGainMode = if (automaticGain == true) optional("gain mode", null) {
+                transact(socket, request(GET_GAIN_MODE)) { it.bool() }
+            } else null,
             fullDuplex = optional("duplex capability", null) {
                 transact(socket, request(GET_FULL_DUPLEX)) { it.bool() }
             },
@@ -234,7 +251,10 @@ class SoapyRemoteClient(
         private const val GET_NATIVE_STREAM_FORMAT = 305
         private const val GET_STREAM_ARGS_INFO = 306
         private const val LIST_ANTENNAS = 500
+        private const val GET_ANTENNA = 502
         private const val LIST_GAINS = 700
+        private const val GET_GAIN_MODE = 702
+        private const val GET_GAIN_ELEMENT = 706
         private const val GET_GAIN_ELEMENT_RANGE = 708
         private const val HAS_GAIN_MODE = 709
         private const val GET_FREQUENCY_RANGE = 805

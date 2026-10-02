@@ -28,7 +28,7 @@ class SoapyRemoteClientTest {
                         socket.getOutputStream().write(writer.frame().encode())
                         socket.getOutputStream().flush()
                     }
-                    repeat(53) {
+                    repeat(57) {
                         val reader = SoapyRpcReader(SoapyRpcFrame.readFrom(socket.getInputStream()).payload)
                         val call = reader.call()
                         calls += call
@@ -63,9 +63,34 @@ class SoapyRemoteClientTest {
                                     ) else emptyList(),
                                 ))
                             }
-                            304, 500, 700, 1202 -> {
+                            304, 1202 -> {
                                 queriedChannels += reader.char() to reader.int32()
                                 reply(SoapyRpcWriter().emptyStringList())
+                            }
+                            500, 700 -> {
+                                val pair = reader.char() to reader.int32()
+                                queriedChannels += pair
+                                reply(if (pair == (1 to 0)) SoapyRpcWriter().stringList(
+                                    if (call == 500) listOf("RX", "RX2") else listOf("LNA"),
+                                ) else SoapyRpcWriter().emptyStringList())
+                            }
+                            708 -> {
+                                queriedChannels += reader.char() to reader.int32()
+                                assertEquals("LNA", reader.string())
+                                reply(SoapyRpcWriter().range(SoapyRange(0.0, 30.0, 1.0)))
+                            }
+                            706 -> {
+                                queriedChannels += reader.char() to reader.int32()
+                                assertEquals("LNA", reader.string())
+                                reply(SoapyRpcWriter().float64(12.0))
+                            }
+                            502 -> {
+                                queriedChannels += reader.char() to reader.int32()
+                                reply(SoapyRpcWriter().string("RX"))
+                            }
+                            702 -> {
+                                queriedChannels += reader.char() to reader.int32()
+                                reply(SoapyRpcWriter().bool(false))
                             }
                             805, 906, 907 -> {
                                 queriedChannels += reader.char() to reader.int32()
@@ -76,8 +101,9 @@ class SoapyRemoteClientTest {
                                 reply(SoapyRpcWriter().emptyFloat64List())
                             }
                             203, 709 -> {
-                                queriedChannels += reader.char() to reader.int32()
-                                reply(SoapyRpcWriter().bool(false))
+                                val pair = reader.char() to reader.int32()
+                                queriedChannels += pair
+                                reply(SoapyRpcWriter().bool(call == 709 && pair == (1 to 0)))
                             }
                             1402 -> reply(SoapyRpcWriter().argInfoList(emptyList()))
                             1200 -> reply(SoapyRpcWriter().emptyStringList())
@@ -114,15 +140,19 @@ class SoapyRemoteClientTest {
             assertEquals("WIRE", info.allRxCapabilities[0].streamArgs.single().key)
             assertEquals(listOf("CS16", "CF32"), info.allRxCapabilities[0].streamArgs.single().options)
             assertEquals(listOf("16-bit", "32-bit"), info.allRxCapabilities[0].streamArgs.single().optionNames)
+            assertEquals(12.0, info.allRxCapabilities[0].currentGains["LNA"])
+            assertEquals(SoapyRange(0.0, 30.0, 1.0), info.allRxCapabilities[0].gainRanges["LNA"])
+            assertEquals("RX", info.allRxCapabilities[0].currentAntenna)
+            assertEquals(false, info.allRxCapabilities[0].currentGainMode)
             assertEquals(
                 listOf(1 to 0, 1 to 1, 0 to 0),
-                queriedChannels.chunked(14).map { chunk -> chunk.first() },
+                queriedChannels.distinct(),
             )
             assertEquals(
                 listOf(20, 1, 100, 101, 102, 1402, 1200, 202, 202) +
-                    listOf(700, 305, 1405, 1202, 304, 306, 500, 709, 203, 805, 902, 907, 905, 906) +
-                    listOf(700, 305, 1405, 1202, 304, 306, 500, 709, 203, 805, 902, 907, 905, 906) +
-                    listOf(700, 305, 1405, 1202, 304, 306, 500, 709, 203, 805, 902, 907, 905, 906) +
+                    listOf(700, 708, 706, 500, 709, 305, 1405, 1202, 304, 306, 502, 702, 203, 805, 902, 907, 905, 906) +
+                    listOf(700, 500, 709, 305, 1405, 1202, 304, 306, 203, 805, 902, 907, 905, 906) +
+                    listOf(700, 500, 709, 305, 1405, 1202, 304, 306, 203, 805, 902, 907, 905, 906) +
                     listOf(2, 3),
                 calls,
             )

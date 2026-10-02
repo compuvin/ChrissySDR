@@ -57,6 +57,9 @@ class SoapyRemoteBackend(
             config.format,
             config.fullScale,
             config.mode,
+            config.rxGains,
+            config.rxAntenna,
+            config.rxHardwareAgc,
             cancellation,
         )
         return object : RadioReceiver {
@@ -133,6 +136,9 @@ private fun SoapyChannelCapabilities.toRadioCapabilities() = RadioChannelCapabil
     gainRanges = gainRanges.mapValues { (_, range) ->
         RadioRange(range.minimum, range.maximum, range.step)
     },
+    currentGains = currentGains,
+    currentAntenna = currentAntenna,
+    currentGainMode = currentGainMode,
     automaticGain = automaticGain,
     fullDuplex = fullDuplex,
     frequencyRanges = frequencyRanges.map { RadioRange(it.minimum, it.maximum, it.step) },

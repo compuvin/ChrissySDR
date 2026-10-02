@@ -40,6 +40,9 @@ data class RadioChannelCapabilities(
     val antennas: List<String>,
     val gains: List<String>,
     val gainRanges: Map<String, RadioRange>,
+    val currentGains: Map<String, Double> = emptyMap(),
+    val currentAntenna: String? = null,
+    val currentGainMode: Boolean? = null,
     val automaticGain: Boolean?,
     val fullDuplex: Boolean?,
     val frequencyRanges: List<RadioRange>,
@@ -77,6 +80,9 @@ data class ReceiverConfig(
     val format: String,
     val fullScale: Double,
     val mode: String = "AM",
+    val rxGains: Map<String, Double> = emptyMap(),
+    val rxAntenna: String? = null,
+    val rxHardwareAgc: Boolean? = null,
 )
 
 data class TransmitterConfig(

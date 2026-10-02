@@ -12,6 +12,44 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-02 — Capability-aware RX gain, AGC, and antenna controls
+
+- **App version:** `0.5.2-dev.5` local debug build; not published.
+- **Scope:** Operating Controls gains named RX gain sliders (where both current
+  value and range are reported), a Radio AGC switch (where supported), and the
+  spectrum span selector. Settings gains an RX antenna picker when multiple
+  antennas are reported; advanced sample rate remains in Settings. Gain
+  changes apply on slider release. Active RX reopens to apply gain, AGC, or
+  antenna changes; selections are also applied on retune/reconnect. The old
+  combined bottom-sheet roadmap line is checked off under this split layout.
+- **Device result:** Pending live radio test, especially gain/AGC/antenna behavior.
+- **Automated result:** 81 unit tests and debug APK assembly passed; APK
+  identifies as version code 20 / name `0.5.2-dev.5`.
+
+## 2026-10-02 — Step-aware frequency arrows
+
+- **App version:** `0.5.2-dev.4` local debug build; not published.
+- **Scope:** Operating Controls now has down/up arrows beside the frequency field.
+  Each press changes the frequency by the selected tuning step, including while
+  receiving, and respects reported RX frequency limits. The roadmap's
+  step-aware tuning item is checked off using this arrow-based interaction.
+- **Device result:** Pending operator test.
+
+## 2026-10-02 — Separate operating controls and quick connect
+
+- **App version:** `0.5.2-dev.3` local debug build; not published.
+- **Scope:** Bottom-bar frequency/mode opens an Operating Controls sheet for
+  frequency, mode, passband, RX start/stop, and tuning step. The top SETTINGS
+  button opens radio/app configuration, with SoapyRemote setup first, followed
+  by saved profiles, sample-rate override, spectrum display settings, TX safety,
+  radio information, and version. Tapping the header opens a compact saved-radio
+  list that uses existing one-tap load-and-start-RX behavior; with no profiles,
+  it opens Settings at connection setup instead. The header shows the active
+  profile or radio name while receiving.
+- **Automated result:** 78 unit tests and debug APK assembly passed; APK
+  identifies as `com.kb1jdx.chrissysdr` version code 18 / name `0.5.2-dev.3`.
+- **Device result:** Pending navigation and quick-connect testing.
+
 ## 2026-10-02 — Spectrum tap and drag tuning
 
 - **App version:** `0.5.2-dev.2` local debug build; not published.
