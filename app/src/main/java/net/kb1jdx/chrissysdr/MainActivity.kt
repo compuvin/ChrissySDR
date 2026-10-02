@@ -65,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -165,6 +166,10 @@ class MainActivity : ComponentActivity() {
                     onBandwidthChanged = radio::setBandwidth,
                     onModeChanged = radio::setMode,
                     onSampleRateChanged = radio::selectSampleRate,
+                    onSpectrumAveragingChanged = radio::setSpectrumAveraging,
+                    onSpectrumFloorChanged = radio::setSpectrumFloorDb,
+                    onSpectrumRangeChanged = radio::setSpectrumRangeDb,
+                    onSpectrumSpanChanged = radio::setSpectrumSpanHz,
                     onAllowUnknownTxRange = radio::setAllowUnknownTxRange,
                     onDiscover = {
                         if (Build.VERSION.SDK_INT >= 37 &&
@@ -237,6 +242,10 @@ private fun RadioScreen(
     onBandwidthChanged: (String) -> Unit,
     onModeChanged: (String) -> Unit,
     onSampleRateChanged: (Double?) -> Unit,
+    onSpectrumAveragingChanged: (Float) -> Unit,
+    onSpectrumFloorChanged: (Int) -> Unit,
+    onSpectrumRangeChanged: (Int) -> Unit,
+    onSpectrumSpanChanged: (Double?) -> Unit,
     onAllowUnknownTxRange: (Boolean) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
@@ -283,12 +292,11 @@ private fun RadioScreen(
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
-            SpectrumPlaceholder(
+            SpectrumDisplay(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                centerFrequency = state.frequency.toDoubleOrNull(),
-                active = state.rxActive,
+                state = state,
             )
             Spacer(Modifier.height(12.dp))
             StatusPanel(state)
@@ -309,6 +317,10 @@ private fun RadioScreen(
                 onBandwidthChanged = onBandwidthChanged,
                 onModeChanged = onModeChanged,
                 onSampleRateChanged = onSampleRateChanged,
+                onSpectrumAveragingChanged = onSpectrumAveragingChanged,
+                onSpectrumFloorChanged = onSpectrumFloorChanged,
+                onSpectrumRangeChanged = onSpectrumRangeChanged,
+                onSpectrumSpanChanged = onSpectrumSpanChanged,
                 onAllowUnknownTxRange = onAllowUnknownTxRange,
                 onDiscover = onDiscover,
                 onInspect = onInspect,
@@ -378,11 +390,13 @@ private fun RadioHeader(connectionStatus: String, onSettings: () -> Unit) {
 }
 
 @Composable
-private fun SpectrumPlaceholder(
+private fun SpectrumDisplay(
     modifier: Modifier,
-    centerFrequency: Double?,
-    active: Boolean,
+    state: RadioUiState,
 ) {
+    val frame = state.spectrum
+    val spanHz = frame?.let { (state.spectrumSpanHz ?: it.sampleRateHz).coerceAtMost(it.sampleRateHz) }
+    val centerFrequency = frame?.centerFrequencyHz ?: state.frequency.toDoubleOrNull()
     Card(
         modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = SpectrumBackground),
@@ -399,19 +413,48 @@ private fun SpectrumPlaceholder(
                     val y = size.height * index / 6f
                     drawLine(gridColor, Offset(0f, y), Offset(size.width, y), 1f)
                 }
-                val path = Path()
-                val baseline = size.height * 0.7f
-                path.moveTo(0f, baseline)
-                repeat(96) { index ->
-                    val x = size.width * index / 95f
-                    val center = kotlin.math.abs(index - 48) / 48f
-                    val signal = if (active) {
-                        kotlin.math.exp(-center * 12f) * size.height * 0.38f
-                    } else 0f
-                    val ripple = kotlin.math.sin(index * 1.7f) * size.height * 0.012f
-                    path.lineTo(x, baseline - signal + ripple)
+                if (frame != null && spanHz != null && spanHz > 0.0) {
+                    val passband = state.bandwidth.toDoubleOrNull() ?: 0.0
+                    val lower = when (state.mode) {
+                        "USB" -> 0.0
+                        "LSB" -> -passband
+                        else -> -passband / 2.0
+                    }
+                    val upper = when (state.mode) {
+                        "USB" -> passband
+                        "LSB" -> 0.0
+                        else -> passband / 2.0
+                    }
+                    val left = (size.width * (0.5 + lower / spanHz)).toFloat()
+                        .coerceIn(0f, size.width)
+                    val right = (size.width * (0.5 + upper / spanHz)).toFloat()
+                        .coerceIn(0f, size.width)
+                    if (right > left) drawRect(
+                        FrequencyMarker.copy(alpha = 0.12f),
+                        topLeft = Offset(left, 0f),
+                        size = Size(right - left, size.height),
+                    )
+                    val bins = frame.binsDbfs
+                    val path = Path()
+                    val points = size.width.toInt().coerceIn(2, bins.size)
+                    for (point in 0 until points) {
+                        val fraction = point.toDouble() / (points - 1)
+                        val frequencyOffset = (fraction - 0.5) * spanHz
+                        val bin = ((frequencyOffset / frame.sampleRateHz + 0.5) * bins.size)
+                            .toInt().coerceIn(0, bins.lastIndex)
+                        val nextOffset = ((point + 1.0) / (points - 1) - 0.5) * spanHz
+                        val nextBin = ((nextOffset / frame.sampleRateHz + 0.5) * bins.size)
+                            .toInt().coerceIn(bin, bins.lastIndex)
+                        var peak = bins[bin]
+                        for (candidate in bin + 1..nextBin) peak = maxOf(peak, bins[candidate])
+                        val level = ((peak - state.spectrumFloorDb) /
+                            state.spectrumRangeDb).coerceIn(0f, 1f)
+                        val x = size.width * fraction.toFloat()
+                        val y = size.height * (1f - level)
+                        if (point == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                    }
+                    drawPath(path, SpectrumTrace, style = Stroke(2f, cap = StrokeCap.Round))
                 }
-                drawPath(path, SpectrumTrace, style = Stroke(3f, cap = StrokeCap.Round))
                 drawLine(
                     color = FrequencyMarker,
                     start = Offset(size.width / 2, 0f),
@@ -422,20 +465,25 @@ private fun SpectrumPlaceholder(
             Column(
                 modifier = Modifier.align(Alignment.TopStart).padding(20.dp),
             ) {
-                Text("SPECTRUM", color = SpectrumTrace, fontWeight = FontWeight.Bold)
+                Text("LIVE SPECTRUM", color = SpectrumTrace, fontWeight = FontWeight.Bold)
                 Text(
-                    if (active) "RX stream active • FFT coming next" else "Display preview • start RX for audio",
+                    if (frame != null) "${formatHz(spanHz!!)} span • ${frame.binsDbfs.size} bins"
+                    else if (state.rxActive) "Waiting for IQ samples…" else "Start RX to see signals",
                     color = Color(0xFF91A8A5),
                     fontSize = 12.sp,
                 )
             }
-            Text(
-                displayFrequency(centerFrequency),
-                modifier = Modifier.align(Alignment.BottomCenter).padding(20.dp),
-                fontFamily = FontFamily.Monospace,
-                fontSize = 18.sp,
-                color = Color.White,
-            )
+            Row(
+                modifier = Modifier.align(Alignment.BottomCenter)
+                    .fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                val halfSpan = (spanHz ?: 0.0) / 2.0
+                Text(displayFrequency(centerFrequency?.minus(halfSpan)), fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace, color = Color.White)
+                Text(displayFrequency(centerFrequency?.plus(halfSpan)), fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace, color = Color.White)
+            }
         }
     }
 }
@@ -525,6 +573,10 @@ private fun SettingsSheet(
     onBandwidthChanged: (String) -> Unit,
     onModeChanged: (String) -> Unit,
     onSampleRateChanged: (Double?) -> Unit,
+    onSpectrumAveragingChanged: (Float) -> Unit,
+    onSpectrumFloorChanged: (Int) -> Unit,
+    onSpectrumRangeChanged: (Int) -> Unit,
+    onSpectrumSpanChanged: (Double?) -> Unit,
     onAllowUnknownTxRange: (Boolean) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
@@ -632,6 +684,80 @@ private fun SettingsSheet(
             )
         }
         Text(state.txStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+
+        HorizontalDivider(Modifier.padding(vertical = 16.dp))
+        Text("Spectrum", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Display controls do not change the radio stream.", fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            var spanExpanded by remember { mutableStateOf(false) }
+            val availableRate = minOf(state.appliedSampleRateHz ?: state.sampleRateHz ?: 48_000.0, 48_000.0)
+            val spans = listOf(null, 3_000.0, 6_000.0, 12_000.0, 24_000.0, 48_000.0)
+                .filter { it == null || it <= availableRate }
+            Box(Modifier.weight(1f)) {
+                OutlinedButton(onClick = { spanExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Span: ${state.spectrumSpanHz?.let(::formatHz) ?: "auto"}")
+                }
+                DropdownMenu(spanExpanded, onDismissRequest = { spanExpanded = false }) {
+                    spans.forEach { span ->
+                        DropdownMenuItem(
+                            text = { Text(span?.let(::formatHz) ?: "Auto") },
+                            onClick = { onSpectrumSpanChanged(span); spanExpanded = false },
+                        )
+                    }
+                }
+            }
+            var averagingExpanded by remember { mutableStateOf(false) }
+            Box(Modifier.weight(1f)) {
+                OutlinedButton(onClick = { averagingExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Avg: ${when (state.spectrumAveraging) {
+                        0.15f -> "slow"
+                        0.7f -> "fast"
+                        1f -> "off"
+                        else -> "medium"
+                    }}")
+                }
+                DropdownMenu(averagingExpanded, onDismissRequest = { averagingExpanded = false }) {
+                    listOf("Slow" to 0.15f, "Medium" to 0.35f, "Fast" to 0.7f, "Off" to 1f)
+                        .forEach { (label, weight) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = { onSpectrumAveragingChanged(weight); averagingExpanded = false },
+                            )
+                        }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            var floorExpanded by remember { mutableStateOf(false) }
+            Box(Modifier.weight(1f)) {
+                OutlinedButton(onClick = { floorExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Floor: ${state.spectrumFloorDb} dB")
+                }
+                DropdownMenu(floorExpanded, onDismissRequest = { floorExpanded = false }) {
+                    listOf(-140, -120, -100, -80, -60).forEach { floor ->
+                        DropdownMenuItem(
+                            text = { Text("$floor dBFS") },
+                            onClick = { onSpectrumFloorChanged(floor); floorExpanded = false },
+                        )
+                    }
+                }
+            }
+            var rangeExpanded by remember { mutableStateOf(false) }
+            Box(Modifier.weight(1f)) {
+                OutlinedButton(onClick = { rangeExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Range: ${state.spectrumRangeDb} dB")
+                }
+                DropdownMenu(rangeExpanded, onDismissRequest = { rangeExpanded = false }) {
+                    listOf(40, 60, 80, 100, 120).forEach { range ->
+                        DropdownMenuItem(
+                            text = { Text("$range dB") },
+                            onClick = { onSpectrumRangeChanged(range); rangeExpanded = false },
+                        )
+                    }
+                }
+            }
+        }
 
         if (state.txRangesUnreported) {
             HorizontalDivider(Modifier.padding(vertical = 20.dp))

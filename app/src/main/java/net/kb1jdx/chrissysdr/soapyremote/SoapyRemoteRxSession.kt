@@ -3,6 +3,8 @@ package com.kb1jdx.chrissysdr.soapyremote
 import com.kb1jdx.chrissysdr.audio.AndroidAudioOutput
 import com.kb1jdx.chrissysdr.dsp.AmReceivePipeline
 import com.kb1jdx.chrissysdr.dsp.SsbReceivePipeline
+import com.kb1jdx.chrissysdr.dsp.SpectrumAnalyzer
+import com.kb1jdx.chrissysdr.dsp.ComplexPolyphaseResampler
 import com.kb1jdx.chrissysdr.radio.SoapyStreamException
 import com.kb1jdx.chrissysdr.radio.RadioOpenCancellation
 import java.io.DataInputStream
@@ -30,6 +32,7 @@ class SoapyRemoteRxSession private constructor(
     private val status: Socket,
     private val streamId: Int,
     val inputSampleRate: Double,
+    val spectrumSampleRate: Double,
     private val streamFormat: String,
     private val fullScale: Double,
     private val passbandHz: Double,
@@ -41,7 +44,11 @@ class SoapyRemoteRxSession private constructor(
     private var readerThread: Thread? = null
     @Volatile private var audioOutput: AndroidAudioOutput? = null
 
-    fun start(onStatistics: (RxStatistics) -> Unit, onError: (Throwable) -> Unit) {
+    fun start(
+        onStatistics: (RxStatistics) -> Unit,
+        onSpectrum: (FloatArray) -> Unit,
+        onError: (Throwable) -> Unit,
+    ) {
         check(!closed.get()) { "RX stream is closed" }
         check(running.compareAndSet(false, true)) { "RX stream is already running" }
         try {
@@ -56,7 +63,7 @@ class SoapyRemoteRxSession private constructor(
             }
             audioOutput = AndroidAudioOutput(audioSampleRate)
             readerThread = Thread(
-                { receiveLoop(audioSampleRate, onStatistics, onError) },
+                { receiveLoop(audioSampleRate, onStatistics, onSpectrum, onError) },
                 "SoapyRemote-RX",
             ).apply { start() }
         } catch (error: Throwable) {
@@ -68,6 +75,7 @@ class SoapyRemoteRxSession private constructor(
     private fun receiveLoop(
         audioSampleRate: Int,
         onStatistics: (RxStatistics) -> Unit,
+        onSpectrum: (FloatArray) -> Unit,
         onError: (Throwable) -> Unit,
     ) {
         var nextSequence = 0L
@@ -80,6 +88,11 @@ class SoapyRemoteRxSession private constructor(
         var intervalStart = System.nanoTime()
         var lastPacketAt = intervalStart
         val bytesPerElement = sampleCodec.bytesPerElement
+        val spectrumAnalyzer = SpectrumAnalyzer()
+        val spectrumResampler = if (inputSampleRate > spectrumSampleRate)
+            ComplexPolyphaseResampler(
+                inputSampleRate, spectrumSampleRate, spectrumSampleRate * 0.85,
+            ) else null
 
         try {
             val input = DataInputStream(stream.getInputStream())
@@ -121,6 +134,10 @@ class SoapyRemoteRxSession private constructor(
                         ?: checkNotNull(ssbPipeline).process(iq, elements)
                     audioOutput?.write(audio, audio.size)
                         ?: error("Android audio output is closed")
+                    val spectrumIq = spectrumResampler?.process(iq, elements) ?: iq
+                    spectrumAnalyzer.accept(
+                        spectrumIq, spectrumIq.size / 2, System.nanoTime(),
+                    )?.let(onSpectrum)
                     totalSamples += elements
                     intervalSamples += elements
 
@@ -213,6 +230,7 @@ class SoapyRemoteRxSession private constructor(
         private const val FLOW_WINDOW_PACKETS = SOCKET_WINDOW / MTU
         private const val ACK_INTERVAL_PACKETS = FLOW_WINDOW_PACKETS / 8
         private const val ANDROID_AUDIO_SAMPLE_RATE = 48_000
+        private const val MAX_SPECTRUM_RATE = 48_000.0
         private const val MIN_RADIO_SAMPLE_RATE = 8_000
         private const val STREAM_STALL_NS = 10_000_000_000L
         private const val SET_SAMPLE_RATE = 900
@@ -309,7 +327,8 @@ class SoapyRemoteRxSession private constructor(
                 setupReply.requireFinished()
                 sendAck(stream!!.getOutputStream(), 0, FLOW_WINDOW_PACKETS)
                 return SoapyRemoteRxSession(
-                    control, stream!!, status!!, streamId, appliedSampleRate, format, fullScale,
+                    control, stream!!, status!!, streamId, appliedSampleRate,
+                    minOf(appliedSampleRate, MAX_SPECTRUM_RATE), format, fullScale,
                     bandwidthHz, mode,
                 )
             } catch (error: Throwable) {

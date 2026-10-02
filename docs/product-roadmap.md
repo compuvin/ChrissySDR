@@ -51,12 +51,12 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
   - [x] USB and LSB product detection with carrier/BFO handling.
 - [x] Add a proper anti-aliasing polyphase resampler between arbitrary radio rates and Android audio rates; remove sample-dropping decimation.
 - [ ] Implement a preallocated radix-2 FFT pipeline for the spectrum:
-  - [ ] Adjustable averaging and dB range.
-  - [ ] Center-frequency and passband overlays.
+  - [x] Adjustable averaging and dB range.
+  - [x] Center-frequency and passband overlays.
   - [ ] Tap to tune and drag to tune.
-  - [ ] No waterfall in this milestone.
+  - [x] No waterfall in this milestone.
 - [ ] Build the portrait Compose receiver screen:
-  - [ ] Spectrum occupies the main area.
+  - [x] Spectrum occupies the main area.
   - [x] Persistent bottom bar shows current frequency and mode.
   - [x] Central TX button is visible but disabled and marked unavailable.
   - [ ] Tapping frequency digits permits step-aware tuning.

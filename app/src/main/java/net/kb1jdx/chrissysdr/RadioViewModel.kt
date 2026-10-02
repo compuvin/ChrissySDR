@@ -13,6 +13,7 @@ import com.kb1jdx.chrissysdr.radio.RadioRange
 import com.kb1jdx.chrissysdr.radio.RadioService
 import com.kb1jdx.chrissysdr.radio.RadioSensor
 import com.kb1jdx.chrissysdr.radio.RadioSetting
+import com.kb1jdx.chrissysdr.radio.SpectrumFrame
 import com.kb1jdx.chrissysdr.radio.ReceiverConfig
 import com.kb1jdx.chrissysdr.radio.TransmitterConfig
 import java.util.concurrent.Executors
@@ -61,6 +62,11 @@ data class RadioUiState(
     val rxActive: Boolean = false,
     val rxBusy: Boolean = false,
     val rxStatus: String = "RX stopped",
+    val spectrum: SpectrumFrame? = null,
+    val spectrumAveraging: Float = 0.35f,
+    val spectrumFloorDb: Int = -120,
+    val spectrumRangeDb: Int = 120,
+    val spectrumSpanHz: Double? = null,
     val txAvailable: Boolean = false,
     val txActive: Boolean = false,
     val txBusy: Boolean = false,
@@ -225,6 +231,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     rxActive = receiving,
                     rxBusy = false,
+                    spectrum = if (receiving) it.spectrum else null,
                     txActive = transmitting,
                     txBusy = false,
                     rxStatus = if (!receiving && it.rxActive) "RX stopped" else it.rxStatus,
@@ -241,6 +248,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 rxActive = false,
                 rxBusy = false,
+                spectrum = null,
                 txActive = false,
                 txBusy = false,
                 connectionState = RadioConnectionState.DISCONNECTED,
@@ -253,6 +261,18 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setHost(value: String) = mutableState.update { it.copy(host = value) }
     fun setPort(value: String) = mutableState.update { it.copy(port = value) }
+    fun setSpectrumAveraging(value: Float) = mutableState.update {
+        it.copy(spectrumAveraging = value.coerceIn(0.05f, 1f))
+    }
+    fun setSpectrumFloorDb(value: Int) = mutableState.update {
+        it.copy(spectrumFloorDb = value.coerceIn(-160, -20))
+    }
+    fun setSpectrumRangeDb(value: Int) = mutableState.update {
+        it.copy(spectrumRangeDb = value.coerceIn(20, 140))
+    }
+    fun setSpectrumSpanHz(value: Double?) = mutableState.update {
+        it.copy(spectrumSpanHz = value?.takeIf { span -> span.isFinite() && span > 0.0 })
+    }
     fun setFrequency(value: String) {
         mutableState.update { it.copy(frequency = value) }
         pendingRxRetune?.cancel(false)
@@ -640,6 +660,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update {
             it.copy(
                 rxBusy = true,
+                spectrum = null,
                 rxStatus = if (retryCount == 0) "Opening RX stream…" else
                     "Reconnecting RX ($retryCount/${RxReconnectPolicy.MAX_RETRIES})…",
                 connectionState = if (retryCount == 0) it.connectionState else
@@ -671,6 +692,23 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                                         append(" • gaps ${stats.sequenceGaps}")
                                     },
                                 )
+                            }
+                        }
+                    },
+                    onSpectrum = { frame ->
+                        if (generation == rxGeneration.get()) {
+                            mutableState.update { current ->
+                                val previous = current.spectrum
+                                val weight = current.spectrumAveraging
+                                val bins = if (previous != null &&
+                                    previous.centerFrequencyHz == frame.centerFrequencyHz &&
+                                    previous.sampleRateHz == frame.sampleRateHz &&
+                                    previous.binsDbfs.size == frame.binsDbfs.size
+                                ) FloatArray(frame.binsDbfs.size) { index ->
+                                    previous.binsDbfs[index] * (1f - weight) +
+                                        frame.binsDbfs[index] * weight
+                                } else frame.binsDbfs
+                                current.copy(spectrum = frame.copy(binsDbfs = bins))
                             }
                         }
                     },
@@ -723,6 +761,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     rxActive = false,
                     rxBusy = false,
+                    spectrum = null,
                     connectionState = RadioConnectionState.RECONNECTING,
                     connectionStatus = "Reconnecting to ${config.endpoint.host}…",
                     lastError = failure,
@@ -739,6 +778,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     rxActive = false,
                     rxBusy = false,
+                    spectrum = null,
                     connectionState = RadioConnectionState.FAILED,
                     connectionStatus = "RX connection failed",
                     lastError = failure,
@@ -765,6 +805,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         rxActive = false,
                         rxBusy = false,
+                        spectrum = null,
                         rxStatus = "RX stopped",
                         connectionState = if (it.connectionState == RadioConnectionState.RECONNECTING)
                             RadioConnectionState.DISCONNECTED else it.connectionState,

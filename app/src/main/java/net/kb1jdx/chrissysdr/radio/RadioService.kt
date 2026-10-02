@@ -63,6 +63,7 @@ class RadioService : Service() {
     fun startReceiver(
         config: ReceiverConfig,
         onStatistics: (ReceiverStatistics) -> Unit,
+        onSpectrum: (SpectrumFrame) -> Unit,
         onError: (Throwable) -> Unit,
         isCancelled: () -> Boolean = { false },
     ): Double = synchronized(lock) {
@@ -79,6 +80,7 @@ class RadioService : Service() {
                 check(!isCancelled() && !cancellation.isCancelled()) { "RX start cancelled" }
                 session.start(
                     onStatistics = onStatistics,
+                    onSpectrum = onSpectrum,
                     onError = { error ->
                         val current = synchronized(lock) {
                             if (receiver === session) {

@@ -63,6 +63,7 @@ class SoapyRemoteBackend(
             override val appliedSampleRate = session.inputSampleRate
             override fun start(
                 onStatistics: (ReceiverStatistics) -> Unit,
+                onSpectrum: (SpectrumFrame) -> Unit,
                 onError: (Throwable) -> Unit,
             ) = session.start(
                 onStatistics = { stats ->
@@ -75,6 +76,9 @@ class SoapyRemoteBackend(
                             stats.sequenceGaps,
                         ),
                     )
+                },
+                onSpectrum = { bins ->
+                    onSpectrum(SpectrumFrame(bins, session.spectrumSampleRate, config.frequencyHz))
                 },
                 onError = onError,
             )

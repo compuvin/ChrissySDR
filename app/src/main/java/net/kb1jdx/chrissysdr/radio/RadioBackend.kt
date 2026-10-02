@@ -96,6 +96,12 @@ data class ReceiverStatistics(
     val sequenceGaps: Long,
 )
 
+data class SpectrumFrame(
+    val binsDbfs: FloatArray,
+    val sampleRateHz: Double,
+    val centerFrequencyHz: Double,
+)
+
 data class TransmitterStatistics(
     val totalSamples: Long,
     val samplesPerSecond: Double,
@@ -105,7 +111,11 @@ data class TransmitterStatistics(
 
 interface RadioReceiver : AutoCloseable {
     val appliedSampleRate: Double
-    fun start(onStatistics: (ReceiverStatistics) -> Unit, onError: (Throwable) -> Unit)
+    fun start(
+        onStatistics: (ReceiverStatistics) -> Unit,
+        onSpectrum: (SpectrumFrame) -> Unit,
+        onError: (Throwable) -> Unit,
+    )
 }
 
 interface RadioTransmitter : AutoCloseable {

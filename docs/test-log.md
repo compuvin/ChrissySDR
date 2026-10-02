@@ -12,14 +12,30 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-02 — Live RX spectrum foundation
+
+- **App version:** `0.5.2-dev.1` local debug build; not published.
+- **Scope:** IQ from the RX stream feeds a preallocated 1,024-point radix-2
+  FFT, throttled to about 10 frames/second. Radio rates above 48 kHz use a
+  separate anti-aliasing resampler for a maximum 48 kHz spectrum span. The
+  portrait main panel now shows live dBFS levels, center and passband overlays,
+  and adjustable span, averaging, floor, and range. No waterfall or touch
+  tuning has been added.
+- **Automated result:** Unit tests cover positive/negative IQ tone placement,
+  level, frame readiness, and frame-rate limiting; debug build passes.
+- **Device result:** Pending. The operator is not available to test now.
+
 ## 2026-10-01 — 0.5.1 release candidate
 
 - **App version:** `0.5.1` debug APK.
 - **Scope:** Passband edits now reopen RX after a 600 ms typing pause, just as
   frequency edits do. Invalid or unsupported passbands leave the current stream
   running and display an error; changing modes continues to reopen RX at once.
-- **Device result:** Operator confirmed dev.4 AM audio sounded better. The
-  passband auto-reopen and USB/LSB audio still need on-radio verification.
+- **Device result:** Operator confirmed dev.4 AM audio sounded better, received
+  a station on 40 meters in LSB with the `0.5.1` APK, and successfully changed
+  the passband during reception. USB reception and live frequency/mode changes
+  remain unverified on radio. Signal quality and exact frequency were not
+  recorded.
 - **Automated result:** 68 unit tests and debug APK assembly passed; APK
   identifies as `com.kb1jdx.chrissysdr` version code 15 / name `0.5.1`.
 
