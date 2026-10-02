@@ -55,13 +55,13 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
   - [x] Center-frequency and passband overlays.
   - [x] Tap to tune and drag to tune.
   - [x] No waterfall in this milestone.
-- [ ] Build the portrait Compose receiver screen:
+- [x] Build the portrait Compose receiver screen:
   - [x] Spectrum occupies the main area.
   - [x] Persistent bottom bar shows current frequency and mode.
   - [x] Central TX button is visible but disabled and marked unavailable.
   - [x] Tapping frequency digits permits step-aware tuning.
   - [x] Pulling up the bottom sheet exposes frequency, mode, filter width, tuning step, gain/AGC, antenna, spectrum span, and advanced sample-rate selection.
-- [ ] Clamp all controls to advertised radio capabilities and explain unavailable controls.
+- [x] Clamp all controls to advertised radio capabilities and explain unavailable controls.
 
 ### 0.6 — Complete Receiver Release
 

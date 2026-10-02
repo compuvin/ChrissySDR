@@ -7,6 +7,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SampleRatePolicyTest {
+    @Test fun overrideMustContainCurrentPassband() {
+        assertTrue(SampleRatePolicy.isUsable(48_000.0, "AM", 6_000.0))
+        assertTrue(!SampleRatePolicy.isUsable(8_000.0, "AM", 12_000.0))
+        assertTrue(!SampleRatePolicy.isUsable(8_000.0, "USB", 4_000.0))
+    }
     @Test
     fun rtlSdrRatesSupportTwelveKilohertzPassband() {
         val choice = SampleRatePolicy.choose(

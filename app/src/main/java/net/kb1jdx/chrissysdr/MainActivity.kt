@@ -278,6 +278,9 @@ private fun RadioScreen(
     var activeSheet by rememberSaveable { mutableStateOf<RadioSheet?>(null) }
     var quickConnectExpanded by remember { mutableStateOf(false) }
     var showTransmitConfirmation by remember { mutableStateOf(false) }
+    val txUnavailableReason = TxControlPolicy.unavailableReason(
+        state.mode, state.txAvailable, state.txStatus, state.frequency, state.txFrequencyRanges,
+    )
 
     Scaffold(
         containerColor = RadioBackground,
@@ -303,7 +306,7 @@ private fun RadioScreen(
                 mode = state.mode,
                 transmitting = state.txActive,
                 txBusy = state.txBusy,
-                txAvailable = state.txAvailable,
+                txUnavailableReason = txUnavailableReason,
                 onOpenControls = { activeSheet = RadioSheet.OPERATING },
                 onTx = {
                     if (state.txActive) {
@@ -329,7 +332,7 @@ private fun RadioScreen(
                 onTuneFrequency = onSpectrumTune,
             )
             Spacer(Modifier.height(12.dp))
-            StatusPanel(state)
+            StatusPanel(state, txUnavailableReason)
         }
     }
 
@@ -619,7 +622,7 @@ private fun SpectrumDisplay(
 }
 
 @Composable
-private fun StatusPanel(state: RadioUiState) {
+private fun StatusPanel(state: RadioUiState, txUnavailableReason: String?) {
     Card(
         colors = CardDefaults.cardColors(containerColor = RadioPanel),
         shape = RoundedCornerShape(14.dp),
@@ -635,6 +638,10 @@ private fun StatusPanel(state: RadioUiState) {
                 fontSize = 13.sp,
                 fontWeight = if (state.txActive) FontWeight.Bold else FontWeight.Normal,
             )
+            if (!state.txActive && txUnavailableReason != null) {
+                Text(txUnavailableReason, fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
@@ -645,7 +652,7 @@ private fun OperatingBar(
     mode: String,
     transmitting: Boolean,
     txBusy: Boolean,
-    txAvailable: Boolean,
+    txUnavailableReason: String?,
     onOpenControls: () -> Unit,
     onTx: () -> Unit,
 ) {
@@ -669,7 +676,7 @@ private fun OperatingBar(
             }
             Button(
                 onClick = onTx,
-                enabled = (txAvailable || transmitting) && !txBusy,
+                enabled = (txUnavailableReason == null || transmitting) && !txBusy,
                 modifier = Modifier.size(70.dp),
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(
@@ -724,6 +731,7 @@ private fun OperatingControlsSheet(
                 label = { Text("Frequency (Hz)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
+                enabled = !state.txActive && !state.txBusy,
             )
             val canStep = !state.txActive && !state.txBusy && !state.rxBusy
             OutlinedButton(
@@ -751,6 +759,7 @@ private fun OperatingControlsSheet(
             label = { Text(if (state.mode == "AM") "AM RF width (Hz)" else "SSB passband (Hz)") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             singleLine = true,
+            enabled = !state.txActive && !state.txBusy,
         )
         Spacer(Modifier.height(12.dp))
         val rxCanStop = state.rxActive || state.rxBusy ||
@@ -816,6 +825,9 @@ private fun OperatingControlsSheet(
                     enabled = (!state.rxHardwareAgcSupported || state.rxHardwareAgc == false) &&
                         !state.rxBusy && !state.txActive && !state.txBusy,
                 )
+            } else {
+                Text("RX $name gain unavailable: current value or range not reported",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         if (state.rxHardwareAgc == true && state.rxGainRanges.isNotEmpty()) {
@@ -949,6 +961,10 @@ private fun SettingsSheet(
                         )
                     }
                 }
+            }
+            if (state.rxBusy || state.txActive || state.txBusy) {
+                Text("Antenna selection is unavailable while RX is switching or TX is active",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 
@@ -1122,6 +1138,8 @@ private fun ConnectionSetupSection(
         enabled = !state.discovering && !state.inspecting && !state.rxActive && !state.txActive,
         modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
     ) { Text(if (state.discovering) "Discovering…" else "Discover devices") }
+    if (state.rxActive) Text("Stop RX before discovering another radio", fontSize = 12.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
     Text(
         state.connectionStatus,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1178,10 +1196,15 @@ private fun SampleRateSelector(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val passband = state.bandwidth.toDoubleOrNull()
+    val usableRates = if (passband == null) emptyList() else state.sampleRateOptions.filter {
+        SampleRatePolicy.isUsable(it, state.mode, passband)
+    }
     Box(modifier) {
         OutlinedButton(
             onClick = { expanded = true },
-            enabled = state.sampleRateOptions.isNotEmpty() && !state.rxActive,
+            enabled = usableRates.isNotEmpty() && !state.rxActive && !state.rxBusy &&
+                !state.txActive && !state.txBusy,
             modifier = Modifier.fillMaxWidth().height(56.dp),
         ) {
             Column(Modifier.fillMaxWidth()) {
@@ -1209,7 +1232,7 @@ private fun SampleRateSelector(
                     onSelected(null)
                 },
             )
-            state.sampleRateOptions.forEach { rate ->
+            usableRates.forEach { rate ->
                 DropdownMenuItem(
                     text = { Text(formatHz(rate)) },
                     onClick = {
@@ -1220,6 +1243,13 @@ private fun SampleRateSelector(
             }
         }
     }
+    if (state.rxActive) Text("Stop RX to change sample rate", fontSize = 12.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
+    else if (state.txActive || state.txBusy) Text("Sample rate is unavailable during TX", fontSize = 12.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
+    else if (state.sampleRateOptions.isNotEmpty() && usableRates.isEmpty())
+        Text("No advertised sample rate can contain this passband", fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable

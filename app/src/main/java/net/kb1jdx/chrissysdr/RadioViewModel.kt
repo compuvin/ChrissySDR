@@ -77,6 +77,7 @@ data class RadioUiState(
     val rxAntennas: List<String> = emptyList(),
     val rxAntenna: String? = null,
     val txAvailable: Boolean = false,
+    val txFrequencyRanges: List<RadioRange> = emptyList(),
     val txActive: Boolean = false,
     val txBusy: Boolean = false,
     val txStatus: String = "AM TX unavailable",
@@ -192,6 +193,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         connectionStatus = "Connecting to ${profile.name}…",
                         rxActive = false, rxBusy = false, rxStatus = "Opening saved radio…",
                         rxAvailable = false, txAvailable = false,
+                        txFrequencyRanges = emptyList(),
                         rxGainRanges = emptyMap(), rxGainValues = emptyMap(),
                         rxHardwareAgcSupported = false, rxHardwareAgc = null,
                         rxAntennas = emptyList(), rxAntenna = null,
@@ -289,7 +291,10 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         it.copy(spectrumRangeDb = value.coerceIn(20, 140))
     }
     fun setSpectrumSpanHz(value: Double?) = mutableState.update {
-        it.copy(spectrumSpanHz = value?.takeIf { span -> span.isFinite() && span > 0.0 })
+        val maximum = minOf(it.appliedSampleRateHz ?: it.sampleRateHz ?: 48_000.0, 48_000.0)
+        it.copy(spectrumSpanHz = value?.takeIf { span ->
+            span.isFinite() && span > 0.0 && span <= maximum
+        })
     }
     fun setTuningStepHz(value: Double) {
         if (value !in TUNING_STEPS_HZ) return
@@ -307,8 +312,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 .coerceIn(range.minimum, range.maximum)
         } else value
         rxGainOverrides = rxGainOverrides + (name to applied)
-        mutableState.update { it.copy(rxGainValues = it.rxGainValues + (name to applied)) }
         if (snapshot.rxActive) startReceiver()
+        else mutableState.update { it.copy(rxGainValues = it.rxGainValues + (name to applied)) }
     }
     fun setRxHardwareAgc(enabled: Boolean) {
         val snapshot = mutableState.value
@@ -316,8 +321,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             snapshot.txActive || snapshot.txBusy || snapshot.rxBusy
         ) return
         rxHardwareAgcOverride = enabled
-        mutableState.update { it.copy(rxHardwareAgc = enabled) }
         if (snapshot.rxActive) startReceiver()
+        else mutableState.update { it.copy(rxHardwareAgc = enabled) }
     }
     fun setRxAntenna(name: String) {
         val snapshot = mutableState.value
@@ -325,8 +330,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             snapshot.txActive || snapshot.txBusy || snapshot.rxBusy
         ) return
         rxAntennaOverride = name
-        mutableState.update { it.copy(rxAntenna = name) }
         if (snapshot.rxActive) startReceiver()
+        else mutableState.update { it.copy(rxAntenna = name) }
     }
     fun stepFrequency(direction: Int) {
         val snapshot = mutableState.value
@@ -335,10 +340,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             snapshot.frequency.toDoubleOrNull() ?: Double.NaN,
             snapshot.tuningStepHz,
             direction,
-            selectedRxCapabilities?.frequencyRanges.orEmpty(),
         )
         if (target == null) {
-            mutableState.update { it.copy(rxStatus = "Frequency step is outside RX limits or the frequency is invalid") }
+            mutableState.update { it.copy(rxStatus = "Frequency step would produce an invalid frequency") }
             return
         }
         setFrequency(BigDecimal.valueOf(target).stripTrailingZeros().toPlainString())
@@ -348,24 +352,27 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         if (!snapshot.rxActive || snapshot.rxBusy || snapshot.txActive || snapshot.txBusy ||
             !frequencyHz.isFinite() || frequencyHz <= 0.0 || frequencyHz > Long.MAX_VALUE.toDouble()
         ) return
-        val ranges = selectedRxCapabilities?.frequencyRanges.orEmpty()
-        if (ranges.isNotEmpty() && ranges.none { frequencyHz in it.minimum..it.maximum }) {
-            mutableState.update { it.copy(rxStatus = "Tuned frequency is outside RX limits reported by the radio") }
-            return
-        }
         val target = frequencyHz.toLong().toString()
         if (target != snapshot.frequency) setFrequency(target)
     }
     fun setFrequency(value: String) {
-        mutableState.update { it.copy(frequency = value) }
+        if (mutableState.value.txActive || mutableState.value.txBusy) return
+        mutableState.update {
+            val passband = it.bandwidth.toDoubleOrNull()
+            val available = validRxFrequency(value) && selectedRxFormat != null &&
+                it.sampleRateHz != null && passband != null &&
+                SampleRatePolicy.isUsable(it.sampleRateHz, it.mode, passband) &&
+                hardwareBandwidthAvailable(passband, it.mode)
+            it.copy(
+                frequency = value,
+                rxAvailable = available,
+                rxStatus = if (!validRxFrequency(value)) "Enter a valid RX frequency" else if (!it.rxActive && available)
+                    "${it.mode} RX ready" else it.rxStatus,
+            )
+        }
         pendingRxRetune?.cancel(false)
         val snapshot = mutableState.value
-        if (!snapshot.rxActive || snapshot.txActive || snapshot.txBusy) return
-        val frequency = value.toDoubleOrNull()
-        if (frequency == null || !frequency.isFinite() || frequency <= 0.0) {
-            mutableState.update { it.copy(rxStatus = "Enter a valid RX frequency") }
-            return
-        }
+        if (!snapshot.rxActive || !snapshot.rxAvailable) return
         scheduleRxRetune()
     }
     fun setMode(value: String) {
@@ -388,19 +395,26 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setBandwidth(value: String) {
+        if (mutableState.value.txActive || mutableState.value.txBusy) return
         pendingRxRetune?.cancel(false)
         mutableState.update { it.copy(bandwidth = value) }
+        val enteredPassband = value.toDoubleOrNull()
+        if (enteredPassband == null || !enteredPassband.isFinite() || enteredPassband <= 0.0) {
+            mutableState.update { it.copy(rxAvailable = false, rxStatus = "Enter a positive passband width") }
+            return
+        }
         if (mutableState.value.sampleRateAutomatic) updateAutomaticSampleRate()
         else {
-            val passband = value.toDoubleOrNull()
+            val passband = enteredPassband
             mutableState.update {
                 val available = selectedRxFormat != null && it.sampleRateHz != null &&
-                    passband != null && passband.isFinite() && passband > 0.0 &&
-                    it.sampleRateHz >= ModeBandwidthDefaults.centeredRfWidth(it.mode, passband) * 1.25 &&
+                    validRxFrequency(it.frequency) &&
+                    SampleRatePolicy.isUsable(it.sampleRateHz, it.mode, passband) &&
                     hardwareBandwidthAvailable(passband, it.mode)
                 it.copy(
                     rxAvailable = available,
-                    rxStatus = if (!available) "No supported RX bandwidth or sample rate contains this passband" else it.rxStatus,
+                    rxStatus = if (!available) "Selected sample rate, hardware bandwidth, or frequency is unavailable" else if (!it.rxActive)
+                        "${it.mode} RX ready" else it.rxStatus,
                 )
             }
         }
@@ -424,18 +438,26 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectSampleRate(value: Double?) {
-        if (value != null && value !in mutableState.value.sampleRateOptions) return
+        val snapshot = mutableState.value
+        val passband = snapshot.bandwidth.toDoubleOrNull()
+        if (value != null && value !in snapshot.sampleRateOptions) return
+        if (value != null && (passband == null || !SampleRatePolicy.isUsable(value, snapshot.mode, passband))) {
+            mutableState.update { it.copy(rxStatus = "That sample rate cannot contain the current passband") }
+            return
+        }
         mutableState.update {
             it.copy(
                 sampleRateAutomatic = value == null,
                 sampleRateHz = value ?: it.sampleRateHz,
                 rxAvailable = selectedRxFormat != null && (value ?: it.automaticSampleRateHz) != null &&
+                    validRxFrequency(it.frequency) &&
                     it.bandwidth.toDoubleOrNull()?.let { passband ->
-                        passband.isFinite() && passband > 0.0 &&
-                            (value ?: it.automaticSampleRateHz)!! >=
-                                ModeBandwidthDefaults.centeredRfWidth(it.mode, passband) * 1.25 &&
+                        SampleRatePolicy.isUsable((value ?: it.automaticSampleRateHz)!!, it.mode, passband) &&
                             hardwareBandwidthAvailable(passband, it.mode)
                     } == true,
+                spectrumSpanHz = it.spectrumSpanHz?.takeIf { span ->
+                    span <= minOf(value ?: it.automaticSampleRateHz ?: 48_000.0, 48_000.0)
+                },
                 appliedSampleRateHz = null,
             )
         }
@@ -470,6 +492,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 selectedDeviceLabel = "",
                 rxAvailable = false,
                 txAvailable = false,
+                txFrequencyRanges = emptyList(),
                 rxGainRanges = emptyMap(), rxGainValues = emptyMap(),
                 rxHardwareAgcSupported = false, rxHardwareAgc = null,
                 rxAntennas = emptyList(), rxAntenna = null,
@@ -639,19 +662,26 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 sampleRateOptions = rxRates.overrideOptions,
                 sampleRateAutomatic = true,
                 appliedSampleRateHz = null,
+                spectrumSpanHz = it.spectrumSpanHz?.takeIf { span ->
+                    rxRate != null && span <= minOf(rxRate, 48_000.0)
+                },
                 rxGainRanges = rxCapabilities?.gainRanges.orEmpty(),
                 rxGainValues = rxCapabilities?.currentGains.orEmpty(),
                 rxHardwareAgcSupported = rxCapabilities?.automaticGain == true,
                 rxHardwareAgc = rxCapabilities?.currentGainMode,
                 rxAntennas = rxCapabilities?.antennas.orEmpty(),
                 rxAntenna = rxCapabilities?.currentAntenna,
-                rxAvailable = selectedRxFormat != null && rxRate != null && bandwidthAvailable,
-                rxStatus = if (selectedRxFormat != null && rxRate != null && bandwidthAvailable) {
+                rxAvailable = selectedRxFormat != null && rxRate != null && bandwidthAvailable &&
+                    validRxFrequency(it.frequency),
+                rxStatus = if (!validRxFrequency(it.frequency)) {
+                    "Enter a valid RX frequency"
+                } else if (selectedRxFormat != null && rxRate != null && bandwidthAvailable) {
                     "${it.mode} RX ready (${selectedRxFormat!!.format}, ${formatHz(rxRate)}; hardware BW ${hardwareBandwidth?.let(::formatHz) ?: "not reported"})"
                 } else {
                     "RX unavailable: no supported rate or hardware bandwidth contains the passband"
                 },
                 txAvailable = txAvailable && it.mode == "AM",
+                txFrequencyRanges = selectedTxCapabilities?.frequencyRanges.orEmpty(),
                 txStatus = txMessage,
                 txRangesUnreported = txRangesUnreported,
                 allowUnknownTxRange = allowUnknownTxRange,
@@ -692,9 +722,15 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 sampleRateHz = choice.automaticRate,
                 automaticSampleRateHz = choice.automaticRate,
                 sampleRateOptions = choice.overrideOptions,
+                spectrumSpanHz = it.spectrumSpanHz?.takeIf { span ->
+                    choice.automaticRate != null && span <= minOf(choice.automaticRate, 48_000.0)
+                },
                 rxAvailable = selectedRxFormat != null && choice.automaticRate != null &&
+                    validRxFrequency(it.frequency) &&
                     hardwareBandwidthAvailable(bandwidth, it.mode),
-                rxStatus = if (choice.automaticRate == null || !hardwareBandwidthAvailable(bandwidth, it.mode)) {
+                rxStatus = if (!validRxFrequency(it.frequency)) {
+                    "Enter a valid RX frequency"
+                } else if (choice.automaticRate == null || !hardwareBandwidthAvailable(bandwidth, it.mode)) {
                     "No supported RX bandwidth or sample rate contains this passband"
                 } else if (!it.rxActive) {
                     "${it.mode} RX ready (${selectedRxFormat!!.format}, ${formatHz(choice.automaticRate)})"
@@ -724,6 +760,15 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             sampleRate == null
         ) {
             mutableState.update { it.copy(rxStatus = "Select a device and enter valid RX values") }
+            return
+        }
+        if (!frequency.isFinite() || frequency <= 0.0 || frequency > Long.MAX_VALUE.toDouble()) {
+            mutableState.update { it.copy(rxStatus = "Enter a valid RX frequency") }
+            return
+        }
+        if (!SampleRatePolicy.isUsable(sampleRate, snapshot.mode, bandwidth)) {
+            mutableState.update { it.copy(rxAvailable = false,
+                rxStatus = "Selected sample rate cannot contain this passband") }
             return
         }
         if (!bandwidth.isFinite() || bandwidth <= 0.0 ||
@@ -830,6 +875,12 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                             connectionStatus = "Connected to ${config.endpoint.host}:${config.endpoint.port}",
                             lastError = null,
                             appliedSampleRateHz = appliedSampleRate,
+                            spectrumSpanHz = it.spectrumSpanHz?.takeIf { span ->
+                                span <= minOf(appliedSampleRate, 48_000.0)
+                            },
+                            rxGainValues = it.rxGainValues + config.rxGains,
+                            rxHardwareAgc = config.rxHardwareAgc ?: it.rxHardwareAgc,
+                            rxAntenna = config.rxAntenna ?: it.rxAntenna,
                             rxStatus = "${config.mode} audio active • applied ${formatHz(appliedSampleRate)}",
                             profileStatus = if (it.activeProfileId != null) {
                                 "Receiving with ${it.profileName}"
@@ -919,20 +970,11 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun validateTransmit(): String? {
-        if (mutableState.value.mode != "AM") return "Transmit is currently available in AM mode only"
-        val frequency = mutableState.value.frequency.toDoubleOrNull()
-            ?: return "Enter a valid transmit frequency"
-        val capabilities = selectedTxCapabilities
-            ?: return "The selected radio is not available for transmit"
-        if (capabilities.frequencyRanges.isEmpty() && !mutableState.value.allowUnknownTxRange) {
-            return "TX is disabled because the radio did not report frequency limits"
-        }
-        if (capabilities.frequencyRanges.isNotEmpty() &&
-            capabilities.frequencyRanges.none { frequency in it.minimum..it.maximum }
-        ) {
-            return "TX frequency is outside the ranges reported by the radio"
-        }
-        return null
+        val snapshot = mutableState.value
+        return TxControlPolicy.unavailableReason(
+            snapshot.mode, snapshot.txAvailable, snapshot.txStatus,
+            snapshot.frequency, snapshot.txFrequencyRanges,
+        )
     }
 
     fun startTransmitter() {
@@ -1190,5 +1232,8 @@ internal fun formatHz(value: Double): String = when {
 }
 
 private val DEFAULT_AM_BANDWIDTH = ModeBandwidthDefaults.AM_HZ.toDouble()
+private fun validRxFrequency(text: String): Boolean = text.toDoubleOrNull()?.let {
+    it.isFinite() && it > 0.0 && it <= Long.MAX_VALUE.toDouble()
+} == true
 private const val RX_RETUNE_DELAY_MS = 600L
 private val TUNING_STEPS_HZ = setOf(1.0, 10.0, 100.0, 1_000.0, 10_000.0)

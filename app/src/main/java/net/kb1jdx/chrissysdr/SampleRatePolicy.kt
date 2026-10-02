@@ -10,6 +10,11 @@ data class SampleRateChoice(
 )
 
 object SampleRatePolicy {
+    fun isUsable(rateHz: Double, mode: String, passbandHz: Double): Boolean =
+        rateHz.isFinite() && passbandHz.isFinite() && passbandHz > 0.0 &&
+            rateHz >= MINIMUM_RATE &&
+            rateHz >= ModeBandwidthDefaults.centeredRfWidth(mode, passbandHz) * BANDWIDTH_MARGIN
+
     private val commonRates = listOf(
         8_000.0, 12_000.0, 16_000.0, 24_000.0, 32_000.0, 48_000.0,
         96_000.0, 192_000.0, 250_000.0, 500_000.0, 1_000_000.0,

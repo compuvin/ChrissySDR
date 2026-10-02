@@ -12,6 +12,23 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-02 — Capability-aware control validation
+
+- **App version:** `0.5.2-dev.6` local debug build; not published.
+- **Scope:** RX frequency ranges are treated as advisory, including typed,
+  arrow, and spectrum tuning; the driver decides whether to accept a tune.
+  TX remains disabled outside reported TX ranges, with the reason visible.
+  Invalid frequency/passband edits disable RX start and explain the problem.
+  The sample-rate picker shows only rates that fit the selected passband and
+  explains when RX must be stopped. Frequency and passband cannot be edited
+  during TX. Gain, Radio AGC, and antenna changes made during RX are displayed
+  after the reopened stream succeeds. Missing gain readback is explained,
+  and spectrum span resets to auto when a lower rate cannot support it.
+- **Device result:** Pending live-radio test, including RTL-SDR tuning below
+  its advertised RX range and TX disable behavior at out-of-range frequencies.
+- **Automated result:** 85 unit tests and debug APK assembly passed; APK
+  identifies as version code 21 / name `0.5.2-dev.6`.
+
 ## 2026-10-02 — Capability-aware RX gain, AGC, and antenna controls
 
 - **App version:** `0.5.2-dev.5` local debug build; not published.
