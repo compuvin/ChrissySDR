@@ -5,7 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.MediaMetadata
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -17,6 +20,7 @@ import android.os.Binder
 import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
+import androidx.core.content.ContextCompat
 import com.kb1jdx.chrissysdr.MainActivity
 import com.kb1jdx.chrissysdr.R
 
@@ -39,6 +43,14 @@ class RadioService : Service() {
     private var rxAudioVolume = 1f
     @Volatile private var pendingRxOpen: RadioOpenCancellation? = null
     @Volatile private var stateListener: ((Boolean, Boolean) -> Unit)? = null
+    @Volatile private var externalStopListener: ((String) -> Unit)? = null
+    private val noisyAudioReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                stopReceiverForExternalReason("RX stopped: headphones or Bluetooth audio disconnected")
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -66,13 +78,19 @@ class RadioService : Service() {
                 Handler(Looper.getMainLooper()),
             )
             .build()
+        ContextCompat.registerReceiver(
+            this,
+            noisyAudioReceiver,
+            IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            stopRadioService()
+            stopRadioService("Radio stopped from notification")
             return START_NOT_STICKY
         }
         return if (isStreaming()) START_STICKY else START_NOT_STICKY
@@ -88,6 +106,16 @@ class RadioService : Service() {
     fun setStateListener(listener: ((receiving: Boolean, transmitting: Boolean) -> Unit)?) {
         stateListener = listener
         notifyState()
+    }
+
+    fun setExternalStopListener(listener: ((String) -> Unit)?) {
+        externalStopListener = listener
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Callbacks still belong to the activity's view model, so no stream should outlive it.
+        stopRadioService("Radio stopped: app removed from Recents")
+        super.onTaskRemoved(rootIntent)
     }
 
     fun startReceiver(
@@ -265,15 +293,39 @@ class RadioService : Service() {
 
     override fun onDestroy() {
         closeAll()
+        unregisterReceiver(noisyAudioReceiver)
         mediaSession.release()
         super.onDestroy()
     }
 
-    private fun stopRadioService() {
+    private fun stopRadioService(reason: String = "Radio stopped") {
+        externalStopListener?.invoke(reason)
         closeAll()
         mediaSession.isActive = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun stopReceiverForExternalReason(reason: String) {
+        val session = synchronized(lock) {
+            receiver?.also { runCatching { it.setAudioVolume(0f) } }
+        } ?: return
+        externalStopListener?.invoke(reason)
+        Thread({
+            val current = synchronized(lock) {
+                if (receiver === session) {
+                    receiver = null
+                    receiverConfig = null
+                    true
+                } else false
+            }
+            if (current) {
+                runCatching { session.close() }
+                abandonRxAudioFocusIfIdle()
+                notifyState()
+                updateForegroundState()
+            }
+        }, "ChrissySDR-route-change").start()
     }
 
     private fun requestRxAudioFocus(): Boolean {
@@ -307,6 +359,7 @@ class RadioService : Service() {
                 audioManager.abandonAudioFocusRequest(rxFocusRequest)
                 active
             }
+            if (session != null) externalStopListener?.invoke("RX stopped: audio focus lost")
             if (session != null) Thread({
                 val current = synchronized(lock) {
                     if (receiver === session) {

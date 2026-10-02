@@ -12,6 +12,21 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-02 — Audio route and service cleanup
+
+- **App version:** `0.5.2-dev.12` local debug build; not published.
+- **Scope:** RX stops when Android warns that a wired headphone or Bluetooth
+  route is disconnecting, avoiding an unexpected switch to the phone speaker.
+  Removing the app from Recents stops both RX and TX; the current activity-owned
+  callbacks cannot safely be reattached to an orphaned RX stream. Notification/media
+  Stop now cancels pending RX
+  retries as well as closing streams and releasing audio focus. Existing stream
+  error and service-destruction paths close radio/audio resources.
+- **Device result:** Pending checks for headphone unplug, Bluetooth disconnect,
+  notification Stop during reconnect, and removing the app from Recents during
+  both RX and TX.
+- **Automated result:** Debug build and unit tests passed.
+
 ## 2026-10-02 — RX audio focus
 
 - **App version:** `0.5.2-dev.11` local debug build; not published.

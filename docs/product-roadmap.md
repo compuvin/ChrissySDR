@@ -65,12 +65,12 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 
 ### 0.6 — Complete Receiver Release
 
-- [ ] Move active RX into a foreground media service with:
+- [x] Move active RX into a foreground media service with:
   - [x] Media-style notification showing frequency and mode.
   - [x] Stop control.
   - [x] Audio focus handling.
-  - [ ] Headphone/Bluetooth route-change handling.
-  - [ ] Reliable cleanup on app removal, service stop, connection loss, or radio error.
+  - [x] Headphone/Bluetooth route-change handling.
+  - [x] Reliable cleanup on app removal, service stop, connection loss, or radio error.
 - [x] Persist the last server, port, device, frequency, mode, filter, gains, and advanced overrides locally.
 - [x] Add reconnect and restore-session behavior, without automatically reopening or keying hardware after an app restart.
 - [x] Provide an in-app diagnostics view with copy/share support for:

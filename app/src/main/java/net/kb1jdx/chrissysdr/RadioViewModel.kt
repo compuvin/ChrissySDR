@@ -273,6 +273,23 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
 
     fun attachService(service: RadioService) {
         radioService = service
+        service.setExternalStopListener { reason ->
+            rxGeneration.incrementAndGet()
+            pendingRxRetune?.cancel(false)
+            service.cancelPendingReceiver()
+            resumeRxAfterTx = false
+            mutableState.update {
+                it.copy(
+                    rxActive = false,
+                    rxBusy = false,
+                    spectrum = null,
+                    txActive = false,
+                    txBusy = false,
+                    rxStatus = reason,
+                    txStatus = reason,
+                )
+            }
+        }
         service.setStateListener { receiving, transmitting ->
             mutableState.update {
                 it.copy(
@@ -1169,6 +1186,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         radioService?.cancelPendingReceiver()
         resumeRxAfterTx = false
         radioService?.setStateListener(null)
+        radioService?.setExternalStopListener(null)
         radioService = null
         worker.shutdownNow()
         retryScheduler.shutdownNow()
