@@ -67,6 +67,7 @@ data class RadioUiState(
     val spectrumFloorDb: Int = -120,
     val spectrumRangeDb: Int = 120,
     val spectrumSpanHz: Double? = null,
+    val tuningStepHz: Double = 100.0,
     val txAvailable: Boolean = false,
     val txActive: Boolean = false,
     val txBusy: Boolean = false,
@@ -272,6 +273,23 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun setSpectrumSpanHz(value: Double?) = mutableState.update {
         it.copy(spectrumSpanHz = value?.takeIf { span -> span.isFinite() && span > 0.0 })
+    }
+    fun setTuningStepHz(value: Double) {
+        if (value !in TUNING_STEPS_HZ) return
+        mutableState.update { it.copy(tuningStepHz = value) }
+    }
+    fun tuneSpectrumTo(frequencyHz: Double) {
+        val snapshot = mutableState.value
+        if (!snapshot.rxActive || snapshot.rxBusy || snapshot.txActive || snapshot.txBusy ||
+            !frequencyHz.isFinite() || frequencyHz <= 0.0 || frequencyHz > Long.MAX_VALUE.toDouble()
+        ) return
+        val ranges = selectedRxCapabilities?.frequencyRanges.orEmpty()
+        if (ranges.isNotEmpty() && ranges.none { frequencyHz in it.minimum..it.maximum }) {
+            mutableState.update { it.copy(rxStatus = "Tuned frequency is outside RX limits reported by the radio") }
+            return
+        }
+        val target = frequencyHz.toLong().toString()
+        if (target != snapshot.frequency) setFrequency(target)
     }
     fun setFrequency(value: String) {
         mutableState.update { it.copy(frequency = value) }
@@ -1090,3 +1108,4 @@ internal fun formatHz(value: Double): String = when {
 
 private val DEFAULT_AM_BANDWIDTH = ModeBandwidthDefaults.AM_HZ.toDouble()
 private const val RX_RETUNE_DELAY_MS = 600L
+private val TUNING_STEPS_HZ = setOf(1.0, 10.0, 100.0, 1_000.0, 10_000.0)

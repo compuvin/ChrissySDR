@@ -46,7 +46,8 @@ The current development build can:
   on radios that report compatible TX capabilities.
 - Report basic stream and signal statistics.
 - Display a live RX spectrum with adjustable span, averaging, and dB scale;
-  show the tuned center and the mode's passband. Touch tuning is still planned.
+  show the tuned center and the mode's passband. Tap or drag the spectrum to
+  tune RX with a selectable frequency step.
 
 Transmit is the central long-term purpose of ChrissySDR. The current AM transmit
 path is an early controlled test facility, not a production-ready transmitter.
@@ -69,7 +70,7 @@ production-signed or Play Store build.
 The first complete receiver is planned to include:
 
 - AM, narrowband FM, USB, and LSB voice reception.
-- Touch tuning on the live spectrum.
+- More precise digit-based tuning controls.
 - Precise frequency entry and mode-aware filters.
 - Capability-driven sample-rate, bandwidth, gain, and antenna controls.
 - Background reception through an Android foreground media service.

@@ -17,6 +17,8 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,6 +72,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -170,6 +173,8 @@ class MainActivity : ComponentActivity() {
                     onSpectrumFloorChanged = radio::setSpectrumFloorDb,
                     onSpectrumRangeChanged = radio::setSpectrumRangeDb,
                     onSpectrumSpanChanged = radio::setSpectrumSpanHz,
+                    onTuningStepChanged = radio::setTuningStepHz,
+                    onSpectrumTune = radio::tuneSpectrumTo,
                     onAllowUnknownTxRange = radio::setAllowUnknownTxRange,
                     onDiscover = {
                         if (Build.VERSION.SDK_INT >= 37 &&
@@ -246,6 +251,8 @@ private fun RadioScreen(
     onSpectrumFloorChanged: (Int) -> Unit,
     onSpectrumRangeChanged: (Int) -> Unit,
     onSpectrumSpanChanged: (Double?) -> Unit,
+    onTuningStepChanged: (Double) -> Unit,
+    onSpectrumTune: (Double) -> Unit,
     onAllowUnknownTxRange: (Boolean) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
@@ -297,6 +304,7 @@ private fun RadioScreen(
                     .fillMaxWidth()
                     .weight(1f),
                 state = state,
+                onTuneFrequency = onSpectrumTune,
             )
             Spacer(Modifier.height(12.dp))
             StatusPanel(state)
@@ -321,6 +329,7 @@ private fun RadioScreen(
                 onSpectrumFloorChanged = onSpectrumFloorChanged,
                 onSpectrumRangeChanged = onSpectrumRangeChanged,
                 onSpectrumSpanChanged = onSpectrumSpanChanged,
+                onTuningStepChanged = onTuningStepChanged,
                 onAllowUnknownTxRange = onAllowUnknownTxRange,
                 onDiscover = onDiscover,
                 onInspect = onInspect,
@@ -393,17 +402,53 @@ private fun RadioHeader(connectionStatus: String, onSettings: () -> Unit) {
 private fun SpectrumDisplay(
     modifier: Modifier,
     state: RadioUiState,
+    onTuneFrequency: (Double) -> Unit,
 ) {
     val frame = state.spectrum
     val spanHz = frame?.let { (state.spectrumSpanHz ?: it.sampleRateHz).coerceAtMost(it.sampleRateHz) }
     val centerFrequency = frame?.centerFrequencyHz ?: state.frequency.toDoubleOrNull()
+    var dragPreviewHz by remember { mutableStateOf<Double?>(null) }
     Card(
         modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = SpectrumBackground),
         shape = RoundedCornerShape(18.dp),
     ) {
         Box(Modifier.fillMaxSize()) {
-            Canvas(Modifier.fillMaxSize().padding(12.dp)) {
+            Canvas(
+                Modifier.fillMaxSize().padding(12.dp)
+                    .pointerInput(frame?.centerFrequencyHz, spanHz, state.tuningStepHz) {
+                        detectTapGestures { position ->
+                            val center = frame?.centerFrequencyHz
+                            val span = spanHz
+                            if (center != null && span != null && !state.rxBusy) {
+                                SpectrumTuning.tap(
+                                    center, span, position.x, size.width.toFloat(), state.tuningStepHz,
+                                )?.let(onTuneFrequency)
+                            }
+                        }
+                    }
+                    .pointerInput(frame?.centerFrequencyHz, spanHz, state.tuningStepHz) {
+                        var distance = 0f
+                        detectDragGestures(
+                            onDragStart = { distance = 0f; dragPreviewHz = null },
+                            onDragEnd = {
+                                dragPreviewHz?.let(onTuneFrequency)
+                                dragPreviewHz = null
+                            },
+                            onDragCancel = { dragPreviewHz = null },
+                        ) { change, dragAmount ->
+                            val center = frame?.centerFrequencyHz
+                            val span = spanHz
+                            if (center != null && span != null && !state.rxBusy) {
+                                distance += dragAmount.x
+                                dragPreviewHz = SpectrumTuning.drag(
+                                    center, span, distance, size.width.toFloat(), state.tuningStepHz,
+                                )
+                                change.consume()
+                            }
+                        }
+                    },
+            ) {
                 val gridColor = Color(0x2638D6C7)
                 repeat(9) { index ->
                     val x = size.width * index / 8f
@@ -471,6 +516,15 @@ private fun SpectrumDisplay(
                     else if (state.rxActive) "Waiting for IQ samples…" else "Start RX to see signals",
                     color = Color(0xFF91A8A5),
                     fontSize = 12.sp,
+                )
+            }
+            dragPreviewHz?.let { preview ->
+                Text(
+                    "Tune ${displayFrequency(preview)}",
+                    modifier = Modifier.align(Alignment.TopEnd).padding(20.dp),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    color = FrequencyMarker,
                 )
             }
             Row(
@@ -577,6 +631,7 @@ private fun SettingsSheet(
     onSpectrumFloorChanged: (Int) -> Unit,
     onSpectrumRangeChanged: (Int) -> Unit,
     onSpectrumSpanChanged: (Double?) -> Unit,
+    onTuningStepChanged: (Double) -> Unit,
     onAllowUnknownTxRange: (Boolean) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
@@ -758,6 +813,22 @@ private fun SettingsSheet(
                 }
             }
         }
+        var tuningStepExpanded by remember { mutableStateOf(false) }
+        Box {
+            OutlinedButton(onClick = { tuningStepExpanded = true }) {
+                Text("Spectrum tuning step: ${formatHz(state.tuningStepHz)}")
+            }
+            DropdownMenu(tuningStepExpanded, onDismissRequest = { tuningStepExpanded = false }) {
+                listOf(1.0, 10.0, 100.0, 1_000.0, 10_000.0).forEach { step ->
+                    DropdownMenuItem(
+                        text = { Text(formatHz(step)) },
+                        onClick = { onTuningStepChanged(step); tuningStepExpanded = false },
+                    )
+                }
+            }
+        }
+        Text("Tap to select a signal; drag to pan, then release to tune.",
+            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         if (state.txRangesUnreported) {
             HorizontalDivider(Modifier.padding(vertical = 20.dp))

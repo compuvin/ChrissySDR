@@ -12,6 +12,17 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-02 — Spectrum tap and drag tuning
+
+- **App version:** `0.5.2-dev.2` local debug build; not published.
+- **Scope:** Tapping the live spectrum selects the frequency at that position.
+  Dragging previews a pan-adjusted target and retunes once on release. Targets
+  snap to the selected tuning step (1 Hz–10 kHz) and respect reported RX
+  frequency ranges. The step control is in the radio-controls sheet.
+- **Automated result:** Pure mapping tests cover tap placement, drag direction,
+  step snapping, and invalid geometry; unit tests and debug build pass.
+- **Device result:** Pending operator test of gesture recognition and tuning.
+
 ## 2026-10-02 — Live RX spectrum foundation
 
 - **App version:** `0.5.2-dev.1` local debug build; not published.
