@@ -8,7 +8,7 @@ import kotlin.math.max
 import kotlin.math.sin
 
 /**
- * Streaming 48 kHz AM demodulator matching the validated flex1500d receive DSP:
+ * Streaming AM demodulator based on the validated flex1500d receive DSP:
  * 129-tap Hamming low-pass, envelope detection, DC blocking, and AGC.
  */
 class AmDemodulator(

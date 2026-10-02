@@ -25,7 +25,7 @@ license and local regulations.
 
 ChrissySDR is under active development and is not ready for general use.
 
-The current `0.4.0` development build can:
+The current development build can:
 
 - Connect to a SoapyRemote server.
 - Discover and inspect attached Soapy devices.
@@ -34,6 +34,8 @@ The current `0.4.0` development build can:
 - Open an RX stream using `CS8`, `CS16`, or `CF32` samples.
 - Select a radio-supported RX sample rate and hardware bandwidth, and retry a
   previously established RX stream after a connection interruption.
+- Save named radio profiles locally and load one to connect and start RX in a
+  single tap (in `0.5.0-dev.1`; hardware testing pending).
 - Play an experimental AM receive stream through Android audio.
 - Send a confirmation-gated, 30-second experimental AM microphone transmission
   on radios that report compatible TX capabilities.

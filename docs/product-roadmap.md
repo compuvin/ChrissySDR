@@ -49,7 +49,7 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
   - [ ] AM envelope detection with DC removal and audio AGC.
   - [ ] NFM discriminator with configurable filtering and deemphasis.
   - [ ] USB and LSB product detection with carrier/BFO handling.
-- [ ] Add a proper anti-aliasing polyphase resampler between arbitrary radio rates and Android audio rates; remove sample-dropping decimation.
+- [x] Add a proper anti-aliasing polyphase resampler between arbitrary radio rates and Android audio rates; remove sample-dropping decimation.
 - [ ] Implement a preallocated radix-2 FFT pipeline for the spectrum:
   - [ ] Adjustable averaging and dB range.
   - [ ] Center-frequency and passband overlays.
@@ -62,7 +62,6 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
   - [ ] Tapping frequency digits permits step-aware tuning.
   - [ ] Pulling up the bottom sheet exposes frequency, mode, filter width, tuning step, gain/AGC, antenna, spectrum span, and advanced sample-rate selection.
 - [ ] Clamp all controls to advertised radio capabilities and explain unavailable controls.
-- [ ] Do not add saved memories yet.
 
 ### 0.6 — Complete Receiver Release
 

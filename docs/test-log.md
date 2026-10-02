@@ -12,6 +12,32 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-01 — Polyphase RX resampling
+
+- **App version:** `0.5.0-dev.2` debug build.
+- **Scope:** Replace AM RX sample-dropping with a streaming complex-IQ
+  resampler. Staged half-band filtering handles high radio rates; a polyphase
+  fractional stage handles non-integer rates and low-rate interpolation to
+  48 kHz Android audio. AM demodulation now runs at the audio rate.
+- **Automated result:** Unit tests and debug APK assembly passed. Generated
+  tones verify passband preservation, alias/image rejection, packet-boundary
+  continuity, and AM recovery at a non-integer radio rate.
+- **Device result:** The operator tested AM receive with both the FLEX-1500
+  and RTL-SDR V4 and reported that both still sounded good. The exact RTL-SDR
+  sample rate and any quantitative audio measurements were not recorded.
+
+## 2026-10-01 — Saved radio profiles
+
+- **App version:** `0.5.0-dev.1` debug build.
+- **Scope:** Room-backed named radio profiles store server, port, device
+  identity, frequency, AM passband, and optional sample-rate override. Tapping
+  a saved radio discovers and inspects that specific device, then starts RX;
+  it never starts TX. Profiles are not auto-connected after app restart.
+- **Automated result:** Room code generation, 50 unit tests, and debug APK
+  assembly passed. Profile matching tests cover exact identity, changed labels,
+  and missing or ambiguous radios.
+- **Device result:** Pending save, restart, and one-tap load/RX checks.
+
 ## 2026-09-30 — 0.4.0 milestone release
 
 - **App version:** `0.4.0` debug/test build.

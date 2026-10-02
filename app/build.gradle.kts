@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
 }
 
 android {
@@ -11,8 +12,8 @@ android {
         applicationId = "com.kb1jdx.chrissysdr"
         minSdk = 26
         targetSdk = 37
-        versionCode = 9
-        versionName = "0.4.0"
+        versionCode = 11
+        versionName = "0.5.0-dev.2"
     }
 
     buildFeatures {
@@ -30,6 +31,12 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
     implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.room:room-runtime:2.8.5")
+    ksp("androidx.room:room-compiler:2.8.5")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }

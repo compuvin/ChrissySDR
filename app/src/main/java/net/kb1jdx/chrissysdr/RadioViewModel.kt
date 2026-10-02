@@ -19,6 +19,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +46,13 @@ data class RadioUiState(
     val lastError: RadioFailure? = null,
     val deviceDetails: String = "",
     val additionalDeviceDetails: String = "",
+    val profiles: List<RadioProfile> = emptyList(),
+    val profileName: String = "",
+    val activeProfileId: String? = null,
+    val loadingProfile: Boolean = false,
+    val savingProfile: Boolean = false,
+    val profileStatus: String = "",
+    val selectedDeviceLabel: String = "",
     val devices: List<RadioDeviceChoice> = emptyList(),
     val discovering: Boolean = false,
     val inspecting: Boolean = false,
@@ -62,6 +70,7 @@ data class RadioUiState(
 
 class RadioViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("radio_safety", 0)
+    private val profileDao = ChrissyDatabase.get(application).radioProfiles()
     private val worker = Executors.newCachedThreadPool()
     private val retryScheduler = Executors.newSingleThreadScheduledExecutor()
     private val rxGeneration = AtomicLong()
@@ -69,6 +78,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<RadioUiState> = mutableState.asStateFlow()
 
     private var selectedPort = RadioEndpoint.DEFAULT_PORT
+    private var selectedHost: String? = null
     private var selectedDevice: Map<String, String>? = null
     private var selectedRxFormat: StreamFormatChoice? = null
     private var selectedRxCapabilities: RadioChannelCapabilities? = null
@@ -78,6 +88,131 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     private var selectedRadioPreferenceKey: String? = null
     @Volatile private var radioService: RadioService? = null
     @Volatile private var resumeRxAfterTx = false
+
+    init {
+        worker.execute { refreshProfiles() }
+    }
+
+    private fun refreshProfiles() {
+        runCatching { profileDao.all().map { it.toProfile() } }
+            .onSuccess { profiles -> mutableState.update { it.copy(profiles = profiles) } }
+            .onFailure { error ->
+                mutableState.update { it.copy(profileStatus = "Could not read profiles: ${error.message}") }
+            }
+    }
+
+    fun setProfileName(value: String) = mutableState.update { it.copy(profileName = value) }
+
+    fun saveRadioProfile() {
+        val snapshot = mutableState.value
+        if (snapshot.savingProfile || snapshot.loadingProfile) return
+        val arguments = selectedDevice
+        val name = snapshot.profileName.trim()
+        val port = snapshot.port.toIntOrNull()
+        if (arguments == null || snapshot.selectedDeviceLabel.isBlank() || name.isBlank() ||
+            snapshot.host.isBlank() || port == null || port !in 1..65535 ||
+            selectedHost != snapshot.host.trim() || selectedPort != port ||
+            snapshot.frequency.toDoubleOrNull()?.let { !it.isFinite() || it <= 0.0 } != false ||
+            snapshot.bandwidth.toDoubleOrNull()?.let { !it.isFinite() || it <= 0.0 } != false
+        ) {
+            mutableState.update { it.copy(profileStatus = "Select a radio and enter a name and valid settings first") }
+            return
+        }
+        val profile = RadioProfile(
+            id = snapshot.activeProfileId ?: UUID.randomUUID().toString(),
+            name = name,
+            host = snapshot.host.trim(),
+            port = port,
+            deviceLabel = snapshot.selectedDeviceLabel,
+            deviceArguments = arguments.toMap(),
+            frequency = snapshot.frequency,
+            bandwidth = snapshot.bandwidth,
+            sampleRateOverrideHz = if (snapshot.sampleRateAutomatic) null else snapshot.sampleRateHz,
+        )
+        mutableState.update { it.copy(savingProfile = true, profileStatus = "Saving ${profile.name}…") }
+        worker.execute {
+            runCatching { profileDao.upsert(profile.toEntity()) }
+                .onSuccess {
+                    refreshProfiles()
+                    mutableState.update {
+                        it.copy(activeProfileId = profile.id, savingProfile = false,
+                            profileStatus = "Saved ${profile.name}")
+                    }
+                }
+                .onFailure { error ->
+                    mutableState.update { it.copy(savingProfile = false,
+                        profileStatus = "Could not save profile: ${error.message}") }
+                }
+        }
+    }
+
+    fun loadRadioProfile(id: String) {
+        val snapshot = mutableState.value
+        if (snapshot.loadingProfile || snapshot.savingProfile || snapshot.discovering || snapshot.inspecting ||
+            snapshot.txActive || snapshot.txBusy
+        ) return
+        mutableState.update {
+            it.copy(loadingProfile = true, profileStatus = "Loading radio profile…")
+        }
+        worker.execute {
+            runCatching {
+                val profile = requireNotNull(profileDao.byId(id)?.toProfile()) { "Profile no longer exists" }
+                val service = checkNotNull(radioService) { "Radio service is not ready" }
+                rxGeneration.incrementAndGet()
+                service.cancelPendingReceiver()
+                service.stopReceiver()
+                mutableState.update {
+                    it.copy(
+                        host = profile.host, port = profile.port.toString(),
+                        frequency = profile.frequency, bandwidth = profile.bandwidth,
+                        devices = emptyList(), deviceDetails = "", additionalDeviceDetails = "",
+                        connectionState = RadioConnectionState.CONNECTING,
+                        connectionStatus = "Connecting to ${profile.name}…",
+                        rxActive = false, rxBusy = false, rxStatus = "Opening saved radio…",
+                        rxAvailable = false, txAvailable = false,
+                        activeProfileId = null, profileName = profile.name,
+                    )
+                }
+                selectedDevice = null
+                selectedHost = null
+                selectedRxCapabilities = null
+                selectedTxCapabilities = null
+                val discovery = service.discover(RadioEndpoint(profile.host, profile.port))
+                val devices = discovery.devices.map { RadioDeviceChoice(it.label, it.arguments) }
+                mutableState.update { it.copy(devices = devices) }
+                val choice = requireNotNull(matchProfileDevice(profile, devices)) {
+                    "Saved radio not found uniquely on ${profile.host}:${profile.port}"
+                }
+                val info = service.inspect(RadioEndpoint(profile.host, profile.port), choice.arguments)
+                configureDevice(profile.host, profile.port, choice, info)
+                profile.sampleRateOverrideHz?.let { savedRate ->
+                    if (savedRate in mutableState.value.sampleRateOptions) selectSampleRate(savedRate)
+                }
+                mutableState.update {
+                    it.copy(
+                        activeProfileId = profile.id,
+                        profileName = profile.name,
+                        profileStatus = "${profile.name}: starting RX…",
+                    )
+                }
+                check(mutableState.value.rxAvailable) {
+                    "Saved radio connected, but its RX settings are not supported"
+                }
+                startReceiver()
+            }.onFailure { error ->
+                val failure = RadioFailure.from("Profile connection failed", error)
+                mutableState.update {
+                    it.copy(
+                        connectionState = RadioConnectionState.FAILED,
+                        connectionStatus = failure.displayMessage,
+                        profileStatus = failure.displayMessage,
+                        lastError = failure,
+                    )
+                }
+            }
+            mutableState.update { it.copy(loadingProfile = false) }
+        }
+    }
 
     fun attachService(service: RadioService) {
         radioService = service
@@ -152,6 +287,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
 
     fun discover() {
         val snapshot = mutableState.value
+        if (snapshot.loadingProfile || snapshot.rxActive || snapshot.rxBusy ||
+            snapshot.txActive || snapshot.txBusy
+        ) return
         val port = snapshot.port.toIntOrNull()
         if (snapshot.host.isBlank() || port == null || port !in 1..65535) {
             mutableState.update {
@@ -171,8 +309,16 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 devices = emptyList(),
                 deviceDetails = "",
                 additionalDeviceDetails = "",
+                activeProfileId = null,
+                selectedDeviceLabel = "",
+                rxAvailable = false,
+                txAvailable = false,
             )
         }
+        selectedDevice = null
+        selectedHost = null
+        selectedRxCapabilities = null
+        selectedTxCapabilities = null
         worker.execute {
             val service = radioService
             if (service == null) {
@@ -219,6 +365,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
 
     fun inspect(choice: RadioDeviceChoice) {
         val snapshot = mutableState.value
+        if (snapshot.loadingProfile || snapshot.rxActive || snapshot.rxBusy ||
+            snapshot.txActive || snapshot.txBusy
+        ) return
         val port = snapshot.port.toIntOrNull() ?: return
         mutableState.update {
             it.copy(inspecting = true, connectionStatus = "Opening ${choice.label}…")
@@ -256,6 +405,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         info: RadioDeviceCapabilities,
     ) {
         selectedPort = port
+        selectedHost = host.trim()
         selectedDevice = choice.arguments
         val radioPreferenceKey = unknownRangePreferenceKey(host, port, choice.arguments)
         selectedRadioPreferenceKey = radioPreferenceKey
@@ -313,6 +463,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 lastError = null,
                 deviceDetails = formatDeviceInfo(info),
                 additionalDeviceDetails = formatAdditionalDeviceInfo(info),
+                selectedDeviceLabel = choice.label,
+                profileName = choice.label,
+                activeProfileId = null,
                 sampleRateHz = rxRate,
                 automaticSampleRateHz = rxRate,
                 sampleRateOptions = rxRates.overrideOptions,
@@ -473,6 +626,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                             lastError = null,
                             appliedSampleRateHz = appliedSampleRate,
                             rxStatus = "AM audio active • applied ${formatHz(appliedSampleRate)}",
+                            profileStatus = if (it.activeProfileId != null) {
+                                "Receiving with ${it.profileName}"
+                            } else it.profileStatus,
                         )
                     }
                 }

@@ -125,11 +125,15 @@ class MainActivity : ComponentActivity() {
                         else "Microphone access denied; AM transmit cannot start",
                     )
                 }
+                var pendingProfileId by remember { mutableStateOf<String?>(null) }
                 val localNetworkPermission = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission(),
                 ) { granted ->
-                    if (granted) radio.discover()
+                    if (granted) {
+                        pendingProfileId?.let(radio::loadRadioProfile) ?: radio.discover()
+                    }
                     else radio.setPermissionMessage("Local-network access was denied")
+                    pendingProfileId = null
                 }
                 val notificationPermission = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission(),
@@ -172,6 +176,17 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onInspect = radio::inspect,
+                    onProfileNameChanged = radio::setProfileName,
+                    onSaveProfile = radio::saveRadioProfile,
+                    onLoadProfile = { id ->
+                        if (Build.VERSION.SDK_INT >= 37 &&
+                            checkSelfPermission(LOCAL_NETWORK_PERMISSION) !=
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            pendingProfileId = id
+                            localNetworkPermission.launch(LOCAL_NETWORK_PERMISSION)
+                        } else radio.loadRadioProfile(id)
+                    },
                     onStartRx = radio::startReceiver,
                     onStopRx = radio::stopReceiver,
                     onTxPressed = {
@@ -223,6 +238,9 @@ private fun RadioScreen(
     onAllowUnknownTxRange: (Boolean) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
+    onProfileNameChanged: (String) -> Unit,
+    onSaveProfile: () -> Unit,
+    onLoadProfile: (String) -> Unit,
     onStartRx: () -> Unit,
     onStopRx: () -> Unit,
     onTxPressed: () -> Boolean,
@@ -291,6 +309,12 @@ private fun RadioScreen(
                 onAllowUnknownTxRange = onAllowUnknownTxRange,
                 onDiscover = onDiscover,
                 onInspect = onInspect,
+                onProfileNameChanged = onProfileNameChanged,
+                onSaveProfile = onSaveProfile,
+                onLoadProfile = { id ->
+                    onLoadProfile(id)
+                    settingsVisible = false
+                },
                 onStartRx = onStartRx,
                 onStopRx = onStopRx,
             )
@@ -500,6 +524,9 @@ private fun SettingsSheet(
     onAllowUnknownTxRange: (Boolean) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
+    onProfileNameChanged: (String) -> Unit,
+    onSaveProfile: () -> Unit,
+    onLoadProfile: (String) -> Unit,
     onStartRx: () -> Unit,
     onStopRx: () -> Unit,
 ) {
@@ -517,6 +544,23 @@ private fun SettingsSheet(
             "Frequency and mode remain visible in the operating bar.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        HorizontalDivider(Modifier.padding(vertical = 16.dp))
+        Text("Saved radios", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        if (state.profiles.isEmpty()) {
+            Text("No radio profiles saved yet.", fontSize = 12.sp)
+        }
+        state.profiles.forEach { profile ->
+            Button(
+                onClick = { onLoadProfile(profile.id) },
+                enabled = !state.savingProfile && !state.loadingProfile && !state.discovering && !state.inspecting &&
+                    !state.txActive && !state.txBusy,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            ) { Text("${profile.name} • ${profile.host}:${profile.port}") }
+        }
+        if (state.loadingProfile || state.profileStatus.isNotBlank()) {
+            Text(state.profileStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+        }
+        HorizontalDivider(Modifier.padding(vertical = 16.dp))
         Spacer(Modifier.height(18.dp))
         OutlinedTextField(
             value = state.frequency,
@@ -631,6 +675,23 @@ private fun SettingsSheet(
                 enabled = !state.inspecting,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(device.label) }
+        }
+        if (state.selectedDeviceLabel.isNotBlank()) {
+            OutlinedTextField(
+                value = state.profileName,
+                onValueChange = onProfileNameChanged,
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                label = { Text("Radio profile name") },
+                singleLine = true,
+            )
+            Button(
+                onClick = onSaveProfile,
+                enabled = !state.savingProfile && !state.loadingProfile && !state.discovering && !state.inspecting &&
+                    state.profileName.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            ) {
+                Text(if (state.activeProfileId == null) "Save radio profile" else "Update radio profile")
+            }
         }
         if (state.deviceDetails.isNotBlank()) {
             Card(

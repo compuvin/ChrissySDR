@@ -48,8 +48,8 @@ class SoapyRemoteRxSession private constructor(
             ) { it.int32() }
             check(activation == 0) { "SoapyRemote activateStream returned $activation" }
 
-            val audioSampleRate = minOf(MAX_AUDIO_SAMPLE_RATE, inputSampleRate.toInt())
-            check(audioSampleRate >= MIN_AUDIO_SAMPLE_RATE) {
+            val audioSampleRate = ANDROID_AUDIO_SAMPLE_RATE
+            check(inputSampleRate >= MIN_RADIO_SAMPLE_RATE) {
                 "The selected sample rate is too low for Android audio ($inputSampleRate Hz)"
             }
             audioOutput = AndroidAudioOutput(audioSampleRate)
@@ -206,8 +206,8 @@ class SoapyRemoteRxSession private constructor(
         private const val SOCKET_WINDOW = 1_048_576
         private const val FLOW_WINDOW_PACKETS = SOCKET_WINDOW / MTU
         private const val ACK_INTERVAL_PACKETS = FLOW_WINDOW_PACKETS / 8
-        private const val MAX_AUDIO_SAMPLE_RATE = 48_000
-        private const val MIN_AUDIO_SAMPLE_RATE = 8_000
+        private const val ANDROID_AUDIO_SAMPLE_RATE = 48_000
+        private const val MIN_RADIO_SAMPLE_RATE = 8_000
         private const val STREAM_STALL_NS = 10_000_000_000L
         private const val SET_SAMPLE_RATE = 900
         private const val GET_SAMPLE_RATE = 901
@@ -224,7 +224,7 @@ class SoapyRemoteRxSession private constructor(
             fullScale: Double,
             cancellation: RadioOpenCancellation,
         ): SoapyRemoteRxSession {
-            require(sampleRate >= MIN_AUDIO_SAMPLE_RATE) { "Sample rate must be at least 8000 Hz" }
+            require(sampleRate >= MIN_RADIO_SAMPLE_RATE) { "Sample rate must be at least 8000 Hz" }
             require(bandwidthHz.isFinite() && bandwidthHz > 0.0) { "Passband must be positive" }
             IqSampleCodec(format, fullScale)
             val control = Socket().also(cancellation::register)
@@ -260,7 +260,7 @@ class SoapyRemoteRxSession private constructor(
                 val appliedSampleRate = transact(
                     SoapyRpcWriter().call(GET_SAMPLE_RATE).char(RX).int32(0),
                 ) { it.float64() }
-                require(appliedSampleRate >= MIN_AUDIO_SAMPLE_RATE) {
+                require(appliedSampleRate >= MIN_RADIO_SAMPLE_RATE) {
                     "Radio applied an unusable sample rate: $appliedSampleRate Hz"
                 }
 
