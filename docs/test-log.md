@@ -12,6 +12,61 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-01 — 0.5.1 release candidate
+
+- **App version:** `0.5.1` debug APK.
+- **Scope:** Passband edits now reopen RX after a 600 ms typing pause, just as
+  frequency edits do. Invalid or unsupported passbands leave the current stream
+  running and display an error; changing modes continues to reopen RX at once.
+- **Device result:** Operator confirmed dev.4 AM audio sounded better. The
+  passband auto-reopen and USB/LSB audio still need on-radio verification.
+- **Automated result:** 68 unit tests and debug APK assembly passed; APK
+  identifies as `com.kb1jdx.chrissysdr` version code 15 / name `0.5.1`.
+
+## 2026-10-01 — SSB passband and live RX controls
+
+- **App version:** `0.5.0-dev.5` debug build.
+- **Scope:** USB/LSB now display a 3 kHz one-sideband passband by default;
+  hardware bandwidth and rate selection still account for the 6 kHz centered
+  IQ span. Mode changes while receiving automatically reopen RX with the new
+  detector. Frequency edits reopen RX after a 600 ms typing pause. No manual
+  Stop RX / Start RX cycle is required.
+- **AM feedback:** The operator reports that dev.4 AM audio sounds better.
+  Whether the restored gain also raises empty-channel noise needs listening
+  evaluation.
+- **Automated result:** Unit tests and debug APK assembly passed.
+- **Device result:** Live mode/frequency switching and SSB audio pending test.
+
+## 2026-10-01 — USB/LSB receive and weak-signal AM gain correction
+
+- **App version:** `0.5.0-dev.4` debug build.
+- **Scope:** Added USB/LSB product detection with one-sided IQ filtering and a
+  suppressed-carrier/BFO reference at the tuned frequency. The mode selector
+  resets RF passband to its default while leaving it manually editable. Saved
+  profiles now retain mode; existing profiles migrate to AM. TX remains AM-only.
+- **AM feedback:** The operator reported very quiet reception with dev.3. The
+  new AM AGC's 20× maximum gain and 0.005 floor could attenuate weak radio IQ;
+  dev.4 raises the gain ceiling and restores a lower AGC floor. This is a
+  probable cause, not yet confirmed by a listening test.
+- **Automated result:** USB/LSB sideband selection, opposite-sideband rejection,
+  BFO offset, carrier leakage, and weak-signal AM gain tests passed; debug APK
+  assembly passed.
+- **Device result:** AM gain correction and USB/LSB audio pending operator test.
+
+## 2026-10-01 — AM detector and default passband
+
+- **App version:** `0.5.0-dev.3` debug build.
+- **Scope:** AM defaults to a 6 kHz total RF passband (approximately ±3 kHz
+  audio), remains manually editable, and will reset to a mode-specific default
+  when a supported mode changes. Other modes remain unavailable until their
+  DSP is implemented. AM envelope detection now uses sample-rate-derived DC
+  blocking and bounded audio AGC with attack/release timing.
+- **Automated result:** Unit tests and debug APK assembly passed. Generated
+  signals verify audio recovery with carrier offset, DC rejection, passband
+  rejection, and AGC leveling without clipping.
+- **Device result:** Operator reported markedly quiet/attenuated audio in dev.3;
+  see dev.4 correction above. No device-side root cause confirmed yet.
+
 ## 2026-10-01 — Polyphase RX resampling
 
 - **App version:** `0.5.0-dev.2` debug build.

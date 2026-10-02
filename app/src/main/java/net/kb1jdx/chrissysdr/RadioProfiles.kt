@@ -1,6 +1,7 @@
 package com.kb1jdx.chrissysdr
 
 import android.content.Context
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -10,6 +11,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import org.json.JSONObject
 
 data class RadioProfile(
@@ -21,6 +24,7 @@ data class RadioProfile(
     val deviceArguments: Map<String, String>,
     val frequency: String,
     val bandwidth: String,
+    val mode: String = "AM",
     val sampleRateOverrideHz: Double?,
 )
 
@@ -34,6 +38,7 @@ data class RadioProfileEntity(
     val deviceArgumentsJson: String,
     val frequency: String,
     val bandwidth: String,
+    @ColumnInfo(defaultValue = "'AM'") val mode: String,
     val sampleRateOverrideHz: Double?,
 )
 
@@ -50,19 +55,24 @@ interface RadioProfileDao {
 
 }
 
-@Database(entities = [RadioProfileEntity::class], version = 1, exportSchema = true)
+@Database(entities = [RadioProfileEntity::class], version = 2, exportSchema = true)
 abstract class ChrissyDatabase : RoomDatabase() {
     abstract fun radioProfiles(): RadioProfileDao
 
     companion object {
         @Volatile private var instance: ChrissyDatabase? = null
+        private val migration1To2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE radio_profiles ADD COLUMN mode TEXT NOT NULL DEFAULT 'AM'")
+            }
+        }
 
         fun get(context: Context): ChrissyDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 ChrissyDatabase::class.java,
                 "chrissysdr.db",
-            ).build().also { instance = it }
+            ).addMigrations(migration1To2).build().also { instance = it }
         }
     }
 }
@@ -76,6 +86,7 @@ fun RadioProfile.toEntity() = RadioProfileEntity(
     deviceArgumentsJson = JSONObject(deviceArguments).toString(),
     frequency = frequency,
     bandwidth = bandwidth,
+    mode = mode,
     sampleRateOverrideHz = sampleRateOverrideHz,
 )
 
@@ -90,6 +101,7 @@ fun RadioProfileEntity.toProfile(): RadioProfile {
         deviceArguments = json.keys().asSequence().associateWith { json.getString(it) },
         frequency = frequency,
         bandwidth = bandwidth,
+        mode = mode,
         sampleRateOverrideHz = sampleRateOverrideHz,
     )
 }

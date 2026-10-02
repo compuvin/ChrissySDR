@@ -76,6 +76,7 @@ data class ReceiverConfig(
     val sampleRate: Double,
     val format: String,
     val fullScale: Double,
+    val mode: String = "AM",
 )
 
 data class TransmitterConfig(

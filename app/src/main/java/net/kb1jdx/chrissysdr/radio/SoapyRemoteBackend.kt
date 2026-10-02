@@ -56,6 +56,7 @@ class SoapyRemoteBackend(
             config.sampleRate,
             config.format,
             config.fullScale,
+            config.mode,
             cancellation,
         )
         return object : RadioReceiver {

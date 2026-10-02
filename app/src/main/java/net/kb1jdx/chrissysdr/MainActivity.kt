@@ -163,6 +163,7 @@ class MainActivity : ComponentActivity() {
                     onPortChanged = radio::setPort,
                     onFrequencyChanged = radio::setFrequency,
                     onBandwidthChanged = radio::setBandwidth,
+                    onModeChanged = radio::setMode,
                     onSampleRateChanged = radio::selectSampleRate,
                     onAllowUnknownTxRange = radio::setAllowUnknownTxRange,
                     onDiscover = {
@@ -234,6 +235,7 @@ private fun RadioScreen(
     onPortChanged: (String) -> Unit,
     onFrequencyChanged: (String) -> Unit,
     onBandwidthChanged: (String) -> Unit,
+    onModeChanged: (String) -> Unit,
     onSampleRateChanged: (Double?) -> Unit,
     onAllowUnknownTxRange: (Boolean) -> Unit,
     onDiscover: () -> Unit,
@@ -305,6 +307,7 @@ private fun RadioScreen(
                 onPortChanged = onPortChanged,
                 onFrequencyChanged = onFrequencyChanged,
                 onBandwidthChanged = onBandwidthChanged,
+                onModeChanged = onModeChanged,
                 onSampleRateChanged = onSampleRateChanged,
                 onAllowUnknownTxRange = onAllowUnknownTxRange,
                 onDiscover = onDiscover,
@@ -520,6 +523,7 @@ private fun SettingsSheet(
     onPortChanged: (String) -> Unit,
     onFrequencyChanged: (String) -> Unit,
     onBandwidthChanged: (String) -> Unit,
+    onModeChanged: (String) -> Unit,
     onSampleRateChanged: (Double?) -> Unit,
     onAllowUnknownTxRange: (Boolean) -> Unit,
     onDiscover: () -> Unit,
@@ -576,7 +580,7 @@ private fun SettingsSheet(
                 value = state.bandwidth,
                 onValueChange = onBandwidthChanged,
                 modifier = Modifier.weight(1f),
-                label = { Text("AM passband (Hz)") },
+                label = { Text(if (state.mode == "AM") "AM RF width (Hz)" else "SSB passband (Hz)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
             )
@@ -596,11 +600,28 @@ private fun SettingsSheet(
                     (rxCanStop || state.rxAvailable),
                 modifier = Modifier.weight(1f),
             ) { Text(if (rxCanStop) "Stop RX" else "Start RX") }
-            OutlinedButton(
-                onClick = {},
-                enabled = false,
-                modifier = Modifier.weight(1f),
-            ) { Text("Mode: ${state.mode}") }
+            var modeMenuExpanded by remember { mutableStateOf(false) }
+            Box(Modifier.weight(1f)) {
+                OutlinedButton(
+                    onClick = { modeMenuExpanded = true },
+                    enabled = !state.rxBusy && !state.txActive && !state.txBusy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Mode: ${state.mode}") }
+                DropdownMenu(
+                    expanded = modeMenuExpanded,
+                    onDismissRequest = { modeMenuExpanded = false },
+                ) {
+                    listOf("AM", "USB", "LSB").forEach { mode ->
+                        DropdownMenuItem(
+                            text = { Text(mode) },
+                            onClick = {
+                                onModeChanged(mode)
+                                modeMenuExpanded = false
+                            },
+                        )
+                    }
+                }
+            }
         }
         Text(state.rxStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
         state.appliedSampleRateHz?.let {

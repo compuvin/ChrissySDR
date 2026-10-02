@@ -3,17 +3,18 @@ package com.kb1jdx.chrissysdr.dsp
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.sin
 
 /**
- * Streaming AM demodulator based on the validated flex1500d receive DSP:
- * 129-tap Hamming low-pass, envelope detection, DC blocking, and AGC.
+ * Streaming AM detector: complex passband filtering, phase-independent
+ * envelope detection, audio DC removal, and bounded audio AGC.
  */
 class AmDemodulator(
     private val sampleRate: Double = 48_000.0,
-    cutoffHz: Double = 6_000.0,
+    cutoffHz: Double = 3_000.0,
     private val agcEnabled: Boolean = true,
 ) {
     private val coefficients = DoubleArray(FIR_TAPS)
@@ -22,11 +23,14 @@ class AmDemodulator(
     private var historyIndex = 0
     private var previousAudioInput = 0.0
     private var previousAudioOutput = 0.0
-    private var agcEnvelope = 1.0
+    private var agcEnvelope = AGC_INITIAL_ENVELOPE
+    private val dcCoefficient = exp(-2.0 * PI * DC_CUTOFF_HZ / sampleRate)
+    private val agcAttack = 1.0 - exp(-1.0 / (sampleRate * AGC_ATTACK_SECONDS))
+    private val agcRelease = 1.0 - exp(-1.0 / (sampleRate * AGC_RELEASE_SECONDS))
 
     init {
-        require(sampleRate > 0.0)
-        require(cutoffHz > 0.0 && cutoffHz < sampleRate / 2.0)
+        require(sampleRate.isFinite() && sampleRate > 0.0)
+        require(cutoffHz.isFinite() && cutoffHz > 0.0 && cutoffHz < sampleRate / 2.0)
         val middle = (FIR_TAPS - 1) / 2
         var sum = 0.0
         for (tap in coefficients.indices) {
@@ -58,23 +62,31 @@ class AmDemodulator(
         historyIndex = (historyIndex + 1) % FIR_TAPS
 
         val raw = hypot(filteredI, filteredQ)
-        val highPass = raw - previousAudioInput + DC_BLOCKER * previousAudioOutput
+        val highPass = raw - previousAudioInput + dcCoefficient * previousAudioOutput
         previousAudioInput = raw
         previousAudioOutput = highPass
         if (!agcEnabled) return highPass
 
         val magnitude = abs(highPass)
-        val coefficient = if (magnitude > agcEnvelope) AGC_ATTACK else AGC_RELEASE
+        val coefficient = if (magnitude > agcEnvelope) agcAttack else agcRelease
         agcEnvelope += coefficient * (magnitude - agcEnvelope)
-        return highPass * (AGC_TARGET / max(agcEnvelope, AGC_FLOOR))
+        val gain = minOf(
+            AGC_MAX_GAIN,
+            AGC_TARGET / max(agcEnvelope, AGC_FLOOR),
+            AGC_PEAK_LIMIT / max(magnitude, 1.0e-9),
+        )
+        return highPass * gain
     }
 
     companion object {
         const val FIR_TAPS = 129
-        private const val DC_BLOCKER = 0.995
-        private const val AGC_ATTACK = 0.01
-        private const val AGC_RELEASE = 0.0001
-        private const val AGC_TARGET = 0.7
-        private const val AGC_FLOOR = 1.0e-6
+        private const val DC_CUTOFF_HZ = 20.0
+        private const val AGC_ATTACK_SECONDS = 0.010
+        private const val AGC_RELEASE_SECONDS = 0.300
+        private const val AGC_INITIAL_ENVELOPE = 0.01
+        private const val AGC_TARGET = 0.6
+        private const val AGC_FLOOR = 0.00001
+        private const val AGC_MAX_GAIN = 5_000.0
+        private const val AGC_PEAK_LIMIT = 0.9
     }
 }

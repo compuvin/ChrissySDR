@@ -35,8 +35,13 @@ The current development build can:
 - Select a radio-supported RX sample rate and hardware bandwidth, and retry a
   previously established RX stream after a connection interruption.
 - Save named radio profiles locally and load one to connect and start RX in a
-  single tap (in `0.5.0-dev.1`; hardware testing pending).
+  single tap (hardware testing pending).
 - Play an experimental AM receive stream through Android audio.
+- Default AM to a 6 kHz RF passband, with manual adjustment available.
+- Receive USB and LSB voice with a default 3 kHz sideband passband and
+  sideband-selective product detection; tuning is referenced to the suppressed
+  carrier. Frequency, mode, and passband changes restart RX automatically. Transmit
+  remains AM-only for now.
 - Send a confirmation-gated, 30-second experimental AM microphone transmission
   on radios that report compatible TX capabilities.
 - Report basic stream and signal statistics.
@@ -48,7 +53,7 @@ remain under development. Driver settings are currently read-only, and sensor
 values are snapshots taken during device inspection rather than live meters.
 
 The [GitHub Releases](https://github.com/compuvin/ChrissySDR/releases) page
-provides test APKs. The `0.4.0` APK is debug-signed for testing; it is not a
+provides test APKs. The `0.5.1` APK is debug-signed for testing; it is not a
 production-signed or Play Store build.
 
 ## Screenshots

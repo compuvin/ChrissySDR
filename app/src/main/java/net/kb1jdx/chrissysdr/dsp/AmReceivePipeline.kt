@@ -4,7 +4,7 @@ package com.kb1jdx.chrissysdr.dsp
 class AmReceivePipeline(
     private val inputSampleRate: Double,
     private val outputSampleRate: Int,
-    private val passbandHz: Double = 12_000.0,
+    private val passbandHz: Double = 6_000.0,
 ) {
     init { require(passbandHz.isFinite() && passbandHz > 0.0) }
     private val resampler = ComplexPolyphaseResampler(inputSampleRate, outputSampleRate.toDouble(), passbandHz)
