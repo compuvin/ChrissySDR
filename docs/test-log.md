@@ -12,6 +12,22 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-02 — NFM receive DSP
+
+- **App version:** `0.5.2-dev.7` local debug build; not published.
+- **Scope:** Added a narrowband-FM phase discriminator, centered RF channel
+  filter, audio low-pass filter, DC removal, and selectable Off/50/75 µs
+  deemphasis. NFM defaults to a 12.5 kHz RF width and 3 kHz audio cutoff.
+  Operating Controls exposes the RF width, audio cutoff, and deemphasis;
+  changes restart RX. NFM is receive-only; TX remains AM-only. The 0.5
+  mode-specific DSP checklist is complete in code. The next release is planned
+  as 0.5.2, leaving the published 0.5.1 release unchanged.
+- **Device result:** Pending live NFM reception on hardware.
+- **Automated result:** 91 unit tests and debug APK assembly passed. Synthetic
+  NFM tests cover demodulation, audio filtering, deemphasis, frequency-offset
+  removal, packet continuity, and conversion from a 250 kS/s radio stream.
+  APK identifies as version code 22 / name `0.5.2-dev.7`.
+
 ## 2026-10-02 — Capability-aware control validation
 
 - **App version:** `0.5.2-dev.6` local debug build; not published.

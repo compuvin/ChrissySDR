@@ -80,6 +80,8 @@ data class ReceiverConfig(
     val format: String,
     val fullScale: Double,
     val mode: String = "AM",
+    val nfmAudioCutoffHz: Double = 3_000.0,
+    val nfmDeemphasisUs: Int = 75,
     val rxGains: Map<String, Double> = emptyMap(),
     val rxAntenna: String? = null,
     val rxHardwareAgc: Boolean? = null,

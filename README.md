@@ -40,6 +40,8 @@ The current development build can:
   mode area for operating controls, and SETTINGS for radio/app configuration.
 - Play an experimental AM receive stream through Android audio.
 - Default AM to a 6 kHz RF passband, with manual adjustment available.
+- Receive NFM voice with a 12.5 kHz default RF width, adjustable audio filter,
+  and Off/50/75 µs deemphasis.
 - Receive USB and LSB voice with a default 3 kHz sideband passband and
   sideband-selective product detection; tuning is referenced to the suppressed
   carrier. Frequency, mode, and passband changes restart RX automatically. Transmit

@@ -18,7 +18,9 @@ class ModeBandwidthDefaultsTest {
         assertEquals(6_000.0, ModeBandwidthDefaults.centeredRfWidth("AM", 6_000.0), 0.0)
     }
 
-    @Test fun unavailableModesDoNotExposeUnimplementedDefaults() {
-        assertNull(ModeBandwidthDefaults.forMode("NFM"))
+    @Test fun nfmDefaultsToTwelvePointFiveKilohertzRfWidth() {
+        assertEquals(12_500, ModeBandwidthDefaults.forMode("NFM"))
+        assertEquals(12_500.0, ModeBandwidthDefaults.centeredRfWidth("NFM", 12_500.0), 0.0)
+        assertNull(ModeBandwidthDefaults.forMode("CW"))
     }
 }

@@ -172,6 +172,8 @@ class MainActivity : ComponentActivity() {
                     onStepFrequency = radio::stepFrequency,
                     onBandwidthChanged = radio::setBandwidth,
                     onModeChanged = radio::setMode,
+                    onNfmAudioCutoffChanged = radio::setNfmAudioCutoff,
+                    onNfmDeemphasisChanged = radio::setNfmDeemphasis,
                     onSampleRateChanged = radio::selectSampleRate,
                     onSpectrumAveragingChanged = radio::setSpectrumAveraging,
                     onSpectrumFloorChanged = radio::setSpectrumFloorDb,
@@ -254,6 +256,8 @@ private fun RadioScreen(
     onStepFrequency: (Int) -> Unit,
     onBandwidthChanged: (String) -> Unit,
     onModeChanged: (String) -> Unit,
+    onNfmAudioCutoffChanged: (Double) -> Unit,
+    onNfmDeemphasisChanged: (Int) -> Unit,
     onSampleRateChanged: (Double?) -> Unit,
     onSpectrumAveragingChanged: (Float) -> Unit,
     onSpectrumFloorChanged: (Int) -> Unit,
@@ -348,6 +352,8 @@ private fun RadioScreen(
                     onStepFrequency = onStepFrequency,
                     onBandwidthChanged = onBandwidthChanged,
                     onModeChanged = onModeChanged,
+                    onNfmAudioCutoffChanged = onNfmAudioCutoffChanged,
+                    onNfmDeemphasisChanged = onNfmDeemphasisChanged,
                     onTuningStepChanged = onTuningStepChanged,
                     onRxGainChanged = onRxGainChanged,
                     onRxHardwareAgcChanged = onRxHardwareAgcChanged,
@@ -707,6 +713,8 @@ private fun OperatingControlsSheet(
     onStepFrequency: (Int) -> Unit,
     onBandwidthChanged: (String) -> Unit,
     onModeChanged: (String) -> Unit,
+    onNfmAudioCutoffChanged: (Double) -> Unit,
+    onNfmDeemphasisChanged: (Int) -> Unit,
     onTuningStepChanged: (Double) -> Unit,
     onRxGainChanged: (String, Double) -> Unit,
     onRxHardwareAgcChanged: (Boolean) -> Unit,
@@ -756,7 +764,11 @@ private fun OperatingControlsSheet(
             value = state.bandwidth,
             onValueChange = onBandwidthChanged,
             modifier = Modifier.fillMaxWidth(),
-            label = { Text(if (state.mode == "AM") "AM RF width (Hz)" else "SSB passband (Hz)") },
+            label = { Text(when (state.mode) {
+                "AM" -> "AM RF width (Hz)"
+                "NFM" -> "NFM RF width (Hz)"
+                else -> "SSB passband (Hz)"
+            }) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             singleLine = true,
             enabled = !state.txActive && !state.txBusy,
@@ -782,11 +794,47 @@ private fun OperatingControlsSheet(
                     expanded = modeMenuExpanded,
                     onDismissRequest = { modeMenuExpanded = false },
                 ) {
-                    listOf("AM", "USB", "LSB").forEach { mode ->
+                    listOf("AM", "NFM", "USB", "LSB").forEach { mode ->
                         DropdownMenuItem(
                             text = { Text(mode) },
                             onClick = { onModeChanged(mode); modeMenuExpanded = false },
                         )
+                    }
+                }
+            }
+        }
+        if (state.mode == "NFM") {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                var audioExpanded by remember { mutableStateOf(false) }
+                Box(Modifier.weight(1f)) {
+                    OutlinedButton(
+                        onClick = { audioExpanded = true },
+                        enabled = !state.rxBusy && !state.txActive && !state.txBusy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Audio: ${formatHz(state.nfmAudioCutoffHz)}") }
+                    DropdownMenu(audioExpanded, onDismissRequest = { audioExpanded = false }) {
+                        listOf(2_500.0, 3_000.0, 4_000.0).forEach { cutoff ->
+                            DropdownMenuItem(
+                                text = { Text(formatHz(cutoff)) },
+                                onClick = { onNfmAudioCutoffChanged(cutoff); audioExpanded = false },
+                            )
+                        }
+                    }
+                }
+                var deemphasisExpanded by remember { mutableStateOf(false) }
+                Box(Modifier.weight(1f)) {
+                    OutlinedButton(
+                        onClick = { deemphasisExpanded = true },
+                        enabled = !state.rxBusy && !state.txActive && !state.txBusy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Deemphasis: ${if (state.nfmDeemphasisUs == 0) "Off" else "${state.nfmDeemphasisUs} µs"}") }
+                    DropdownMenu(deemphasisExpanded, onDismissRequest = { deemphasisExpanded = false }) {
+                        listOf(0, 50, 75).forEach { microseconds ->
+                            DropdownMenuItem(
+                                text = { Text(if (microseconds == 0) "Off" else "$microseconds µs") },
+                                onClick = { onNfmDeemphasisChanged(microseconds); deemphasisExpanded = false },
+                            )
+                        }
                     }
                 }
             }

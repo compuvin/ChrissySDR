@@ -12,6 +12,7 @@ data class SampleRateChoice(
 object SampleRatePolicy {
     fun isUsable(rateHz: Double, mode: String, passbandHz: Double): Boolean =
         rateHz.isFinite() && passbandHz.isFinite() && passbandHz > 0.0 &&
+            (mode != "NFM" || passbandHz <= 38_000.0) &&
             rateHz >= MINIMUM_RATE &&
             rateHz >= ModeBandwidthDefaults.centeredRfWidth(mode, passbandHz) * BANDWIDTH_MARGIN
 

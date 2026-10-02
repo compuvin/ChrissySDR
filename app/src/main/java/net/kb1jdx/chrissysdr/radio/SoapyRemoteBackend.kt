@@ -57,6 +57,8 @@ class SoapyRemoteBackend(
             config.format,
             config.fullScale,
             config.mode,
+            config.nfmAudioCutoffHz,
+            config.nfmDeemphasisUs,
             config.rxGains,
             config.rxAntenna,
             config.rxHardwareAgc,

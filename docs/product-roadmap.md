@@ -45,9 +45,9 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 
 ### 0.5 — Voice Receiver and Spectrum
 
-- [ ] Add mode-specific DSP:
+- [x] Add mode-specific DSP:
   - [x] AM envelope detection with DC removal and audio AGC.
-  - [ ] NFM discriminator with configurable filtering and deemphasis.
+  - [x] NFM discriminator with configurable filtering and deemphasis.
   - [x] USB and LSB product detection with carrier/BFO handling.
 - [x] Add a proper anti-aliasing polyphase resampler between arbitrary radio rates and Android audio rates; remove sample-dropping decimation.
 - [x] Implement a preallocated radix-2 FFT pipeline for the spectrum:

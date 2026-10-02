@@ -45,6 +45,8 @@ data class RadioUiState(
     val sampleRateAutomatic: Boolean = true,
     val appliedSampleRateHz: Double? = null,
     val mode: String = "AM",
+    val nfmAudioCutoffHz: Double = 3_000.0,
+    val nfmDeemphasisUs: Int = 75,
     val connectionStatus: String = "Not connected",
     val connectionState: RadioConnectionState = RadioConnectionState.DISCONNECTED,
     val lastError: RadioFailure? = null,
@@ -394,6 +396,26 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setNfmAudioCutoff(value: Double) {
+        val snapshot = mutableState.value
+        if (snapshot.mode != "NFM" || value !in NFM_AUDIO_CUTOFFS_HZ ||
+            snapshot.rxBusy || snapshot.txActive || snapshot.txBusy ||
+            snapshot.nfmAudioCutoffHz == value
+        ) return
+        mutableState.update { it.copy(nfmAudioCutoffHz = value) }
+        if (snapshot.rxActive) startReceiver()
+    }
+
+    fun setNfmDeemphasis(value: Int) {
+        val snapshot = mutableState.value
+        if (snapshot.mode != "NFM" || value !in NFM_DEEMPHASIS_US ||
+            snapshot.rxBusy || snapshot.txActive || snapshot.txBusy ||
+            snapshot.nfmDeemphasisUs == value
+        ) return
+        mutableState.update { it.copy(nfmDeemphasisUs = value) }
+        if (snapshot.rxActive) startReceiver()
+    }
+
     fun setBandwidth(value: String) {
         if (mutableState.value.txActive || mutableState.value.txBusy) return
         pendingRxRetune?.cancel(false)
@@ -401,6 +423,10 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         val enteredPassband = value.toDoubleOrNull()
         if (enteredPassband == null || !enteredPassband.isFinite() || enteredPassband <= 0.0) {
             mutableState.update { it.copy(rxAvailable = false, rxStatus = "Enter a positive passband width") }
+            return
+        }
+        if (mutableState.value.mode == "NFM" && enteredPassband > 38_000.0) {
+            mutableState.update { it.copy(rxAvailable = false, rxStatus = "NFM RF width must be 38 kHz or less") }
             return
         }
         if (mutableState.value.sampleRateAutomatic) updateAutomaticSampleRate()
@@ -672,9 +698,11 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 rxAntennas = rxCapabilities?.antennas.orEmpty(),
                 rxAntenna = rxCapabilities?.currentAntenna,
                 rxAvailable = selectedRxFormat != null && rxRate != null && bandwidthAvailable &&
-                    validRxFrequency(it.frequency),
+                    validRxFrequency(it.frequency) && SampleRatePolicy.isUsable(rxRate, it.mode, bandwidth),
                 rxStatus = if (!validRxFrequency(it.frequency)) {
                     "Enter a valid RX frequency"
+                } else if (it.mode == "NFM" && bandwidth > 38_000.0) {
+                    "NFM RF width must be 38 kHz or less"
                 } else if (selectedRxFormat != null && rxRate != null && bandwidthAvailable) {
                     "${it.mode} RX ready (${selectedRxFormat!!.format}, ${formatHz(rxRate)}; hardware BW ${hardwareBandwidth?.let(::formatHz) ?: "not reported"})"
                 } else {
@@ -727,9 +755,12 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 },
                 rxAvailable = selectedRxFormat != null && choice.automaticRate != null &&
                     validRxFrequency(it.frequency) &&
+                    SampleRatePolicy.isUsable(choice.automaticRate, it.mode, bandwidth) &&
                     hardwareBandwidthAvailable(bandwidth, it.mode),
                 rxStatus = if (!validRxFrequency(it.frequency)) {
                     "Enter a valid RX frequency"
+                } else if (it.mode == "NFM" && bandwidth > 38_000.0) {
+                    "NFM RF width must be 38 kHz or less"
                 } else if (choice.automaticRate == null || !hardwareBandwidthAvailable(bandwidth, it.mode)) {
                     "No supported RX bandwidth or sample rate contains this passband"
                 } else if (!it.rxActive) {
@@ -768,7 +799,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (!SampleRatePolicy.isUsable(sampleRate, snapshot.mode, bandwidth)) {
             mutableState.update { it.copy(rxAvailable = false,
-                rxStatus = "Selected sample rate cannot contain this passband") }
+                rxStatus = if (snapshot.mode == "NFM" && bandwidth > 38_000.0)
+                    "NFM RF width must be 38 kHz or less"
+                else "Selected sample rate cannot contain this passband") }
             return
         }
         if (!bandwidth.isFinite() || bandwidth <= 0.0 ||
@@ -788,6 +821,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             frequencyHz = frequency,
             bandwidthHz = bandwidth,
             mode = snapshot.mode,
+            nfmAudioCutoffHz = snapshot.nfmAudioCutoffHz,
+            nfmDeemphasisUs = snapshot.nfmDeemphasisUs,
             hardwareBandwidthHz = hardwareBandwidth,
             sampleRate = sampleRate,
             format = format.format,
@@ -1237,3 +1272,5 @@ private fun validRxFrequency(text: String): Boolean = text.toDoubleOrNull()?.let
 } == true
 private const val RX_RETUNE_DELAY_MS = 600L
 private val TUNING_STEPS_HZ = setOf(1.0, 10.0, 100.0, 1_000.0, 10_000.0)
+private val NFM_AUDIO_CUTOFFS_HZ = setOf(2_500.0, 3_000.0, 4_000.0)
+private val NFM_DEEMPHASIS_US = setOf(0, 50, 75)

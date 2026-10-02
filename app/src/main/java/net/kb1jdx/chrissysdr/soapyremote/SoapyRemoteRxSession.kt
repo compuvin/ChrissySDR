@@ -3,6 +3,7 @@ package com.kb1jdx.chrissysdr.soapyremote
 import com.kb1jdx.chrissysdr.audio.AndroidAudioOutput
 import com.kb1jdx.chrissysdr.dsp.AmReceivePipeline
 import com.kb1jdx.chrissysdr.dsp.SsbReceivePipeline
+import com.kb1jdx.chrissysdr.dsp.NfmReceivePipeline
 import com.kb1jdx.chrissysdr.dsp.SpectrumAnalyzer
 import com.kb1jdx.chrissysdr.dsp.ComplexPolyphaseResampler
 import com.kb1jdx.chrissysdr.radio.SoapyStreamException
@@ -37,6 +38,8 @@ class SoapyRemoteRxSession private constructor(
     private val fullScale: Double,
     private val passbandHz: Double,
     private val mode: String,
+    private val nfmAudioCutoffHz: Double,
+    private val nfmDeemphasisUs: Int,
 ) : AutoCloseable {
     private val sampleCodec = IqSampleCodec(streamFormat, fullScale)
     private val running = AtomicBoolean(false)
@@ -101,6 +104,10 @@ class SoapyRemoteRxSession private constructor(
                 AmReceivePipeline(inputSampleRate, audioSampleRate, passbandHz) else null
             val ssbPipeline = if (mode == "USB" || mode == "LSB")
                 SsbReceivePipeline(inputSampleRate, audioSampleRate, passbandHz, mode == "USB") else null
+            val nfmPipeline = if (mode == "NFM") NfmReceivePipeline(
+                inputSampleRate, audioSampleRate, passbandHz,
+                nfmAudioCutoffHz, nfmDeemphasisUs,
+            ) else null
             while (running.get()) {
                 try {
                     val bytes = input.readInt()
@@ -131,7 +138,8 @@ class SoapyRemoteRxSession private constructor(
                         peak = maxOf(peak, magnitude)
                     }
                     val audio = amPipeline?.process(iq, elements)
-                        ?: checkNotNull(ssbPipeline).process(iq, elements)
+                        ?: ssbPipeline?.process(iq, elements)
+                        ?: checkNotNull(nfmPipeline).process(iq, elements)
                     audioOutput?.write(audio, audio.size)
                         ?: error("Android audio output is closed")
                     val spectrumIq = spectrumResampler?.process(iq, elements) ?: iq
@@ -250,6 +258,8 @@ class SoapyRemoteRxSession private constructor(
             format: String,
             fullScale: Double,
             mode: String,
+            nfmAudioCutoffHz: Double,
+            nfmDeemphasisUs: Int,
             rxGains: Map<String, Double>,
             rxAntenna: String?,
             rxHardwareAgc: Boolean?,
@@ -258,7 +268,13 @@ class SoapyRemoteRxSession private constructor(
             require(sampleRate >= MIN_RADIO_SAMPLE_RATE) { "Sample rate must be at least 8000 Hz" }
             require(bandwidthHz.isFinite() && bandwidthHz > 0.0) { "Passband must be positive" }
             IqSampleCodec(format, fullScale)
-            require(mode == "AM" || mode == "USB" || mode == "LSB") { "Unsupported RX mode $mode" }
+            require(mode == "AM" || mode == "USB" || mode == "LSB" || mode == "NFM") {
+                "Unsupported RX mode $mode"
+            }
+            require(nfmAudioCutoffHz in listOf(2_500.0, 3_000.0, 4_000.0)) {
+                "Unsupported NFM audio cutoff"
+            }
+            require(nfmDeemphasisUs in listOf(0, 50, 75)) { "Unsupported NFM deemphasis" }
             val control = Socket().also(cancellation::register)
             var stream: Socket? = null
             var status: Socket? = null
@@ -309,6 +325,11 @@ class SoapyRemoteRxSession private constructor(
                 require(appliedSampleRate >= MIN_RADIO_SAMPLE_RATE) {
                     "Radio applied an unusable sample rate: $appliedSampleRate Hz"
                 }
+                val centeredWidth = if (mode == "USB" || mode == "LSB") bandwidthHz * 2.0
+                    else bandwidthHz
+                require(appliedSampleRate >= centeredWidth * 1.25) {
+                    "Radio applied $appliedSampleRate Hz, too low for the $bandwidthHz Hz $mode passband"
+                }
 
                 val setup = SoapyRpcWriter().call(SETUP_STREAM)
                     .char(RX)
@@ -349,7 +370,7 @@ class SoapyRemoteRxSession private constructor(
                 return SoapyRemoteRxSession(
                     control, stream!!, status!!, streamId, appliedSampleRate,
                     minOf(appliedSampleRate, MAX_SPECTRUM_RATE), format, fullScale,
-                    bandwidthHz, mode,
+                    bandwidthHz, mode, nfmAudioCutoffHz, nfmDeemphasisUs,
                 )
             } catch (error: Throwable) {
                 runCatching { stream?.close() }
