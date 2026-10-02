@@ -47,6 +47,12 @@ class SoapyRemoteRxSession private constructor(
     private val closed = AtomicBoolean(false)
     private var readerThread: Thread? = null
     @Volatile private var audioOutput: AndroidAudioOutput? = null
+    @Volatile private var audioVolume = 1f
+
+    fun setAudioVolume(volume: Float) {
+        audioVolume = volume.coerceIn(0f, 1f)
+        audioOutput?.setVolume(audioVolume)
+    }
 
     fun start(
         onStatistics: (RxStatistics) -> Unit,
@@ -66,6 +72,7 @@ class SoapyRemoteRxSession private constructor(
                 "The selected sample rate is too low for Android audio ($inputSampleRate Hz)"
             }
             audioOutput = AndroidAudioOutput(audioSampleRate)
+            audioOutput?.setVolume(audioVolume)
             readerThread = Thread(
                 { receiveLoop(audioSampleRate, onStatistics, onSpectrum, onError) },
                 "SoapyRemote-RX",

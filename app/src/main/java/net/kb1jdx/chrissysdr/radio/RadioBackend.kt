@@ -120,6 +120,7 @@ data class TransmitterStatistics(
 interface RadioReceiver : AutoCloseable {
     val appliedSampleRate: Double
     val appliedHardwareBandwidth: Double? get() = null
+    fun setAudioVolume(volume: Float)
     fun start(
         onStatistics: (ReceiverStatistics) -> Unit,
         onSpectrum: (SpectrumFrame) -> Unit,

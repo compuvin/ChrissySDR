@@ -7,11 +7,16 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.media.MediaMetadata
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.graphics.drawable.Icon
 import android.os.Binder
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import com.kb1jdx.chrissysdr.MainActivity
 import com.kb1jdx.chrissysdr.R
 
@@ -28,6 +33,10 @@ class RadioService : Service() {
     private var receiverConfig: ReceiverConfig? = null
     private var transmitterConfig: TransmitterConfig? = null
     private lateinit var mediaSession: MediaSession
+    private lateinit var audioManager: AudioManager
+    private lateinit var rxFocusRequest: AudioFocusRequest
+    private var rxFocusRequested = false
+    private var rxAudioVolume = 1f
     @Volatile private var pendingRxOpen: RadioOpenCancellation? = null
     @Volatile private var stateListener: ((Boolean, Boolean) -> Unit)? = null
 
@@ -46,6 +55,17 @@ class RadioService : Service() {
                 override fun onStop() = stopRadioService()
             })
         }
+        audioManager = getSystemService(AudioManager::class.java)
+        rxFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build())
+            .setOnAudioFocusChangeListener(
+                AudioManager.OnAudioFocusChangeListener(::onRxAudioFocusChanged),
+                Handler(Looper.getMainLooper()),
+            )
+            .build()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -89,6 +109,10 @@ class RadioService : Service() {
             receiver = session
             try {
                 check(!isCancelled() && !cancellation.isCancelled()) { "RX start cancelled" }
+                receiverConfig = config
+                promote()
+                check(requestRxAudioFocus()) { "Android audio focus is unavailable" }
+                session.setAudioVolume(rxAudioVolume)
                 session.start(
                     onStatistics = onStatistics,
                     onSpectrum = onSpectrum,
@@ -102,6 +126,7 @@ class RadioService : Service() {
                         }
                         if (current) {
                             runCatching { session.close() }
+                            abandonRxAudioFocusIfIdle()
                             notifyState()
                             updateForegroundState()
                             onError(error)
@@ -110,8 +135,6 @@ class RadioService : Service() {
                 )
                 check(!isCancelled() && !cancellation.isCancelled()) { "RX start cancelled" }
                 if (receiver === session) {
-                    receiverConfig = config
-                    promote()
                     notifyState()
                 }
                 ReceiverAppliedSettings(session.appliedSampleRate, session.appliedHardwareBandwidth)
@@ -121,9 +144,11 @@ class RadioService : Service() {
                     receiverConfig = null
                 }
                 runCatching { session.close() }
+                abandonRxAudioFocusIfIdle()
                 throw error
             }
         } catch (error: Throwable) {
+            abandonRxAudioFocusIfIdle()
             notifyState()
             updateForegroundState()
             throw error
@@ -146,6 +171,7 @@ class RadioService : Service() {
             current
         }
         runCatching { session?.close() }
+        abandonRxAudioFocusIfIdle()
         notifyState()
         updateForegroundState()
     }
@@ -159,6 +185,7 @@ class RadioService : Service() {
         runCatching { receiver?.close() }
         receiver = null
         receiverConfig = null
+        abandonRxAudioFocusIfIdle()
         runCatching { transmitter?.close() }
         transmitter = null
         transmitterConfig = null
@@ -232,6 +259,7 @@ class RadioService : Service() {
         }
         runCatching { sessions.first?.close() }
         runCatching { sessions.second?.close() }
+        abandonRxAudioFocusIfIdle()
         notifyState()
     }
 
@@ -246,6 +274,75 @@ class RadioService : Service() {
         mediaSession.isActive = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun requestRxAudioFocus(): Boolean {
+        if (rxFocusRequested) return true
+        if (audioManager.requestAudioFocus(rxFocusRequest) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            return false
+        }
+        rxFocusRequested = true
+        rxAudioVolume = 1f
+        return true
+    }
+
+    private fun abandonRxAudioFocusIfIdle() {
+        synchronized(lock) {
+            if (receiver == null && rxFocusRequested) {
+                rxFocusRequested = false
+                rxAudioVolume = 1f
+                audioManager.abandonAudioFocusRequest(rxFocusRequest)
+            }
+        }
+    }
+
+    private fun onRxAudioFocusChanged(change: Int) {
+        if (change == AudioManager.AUDIOFOCUS_LOSS) {
+            val session = synchronized(lock) {
+                if (!rxFocusRequested) return
+                rxFocusRequested = false
+                rxAudioVolume = 0f
+                val active = receiver
+                runCatching { active?.setAudioVolume(0f) }
+                audioManager.abandonAudioFocusRequest(rxFocusRequest)
+                active
+            }
+            if (session != null) Thread({
+                val current = synchronized(lock) {
+                    if (receiver === session) {
+                        receiver = null
+                        receiverConfig = null
+                        true
+                    } else false
+                }
+                if (current) {
+                    runCatching { session.close() }
+                    notifyState()
+                    updateForegroundState()
+                }
+            }, "ChrissySDR-focus-loss").start()
+            return
+        }
+        val volume = when (change) {
+            AudioManager.AUDIOFOCUS_GAIN -> 1f
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> 0f
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> 0.2f
+            else -> return
+        }
+        val session = synchronized(lock) {
+            if (!rxFocusRequested) return
+            rxAudioVolume = volume
+            receiver
+        }
+        runCatching { session?.setAudioVolume(volume) }
+        if (session != null) mediaSession.setPlaybackState(PlaybackState.Builder()
+            .setActions(PlaybackState.ACTION_STOP)
+            .setState(
+                if (volume == 0f) PlaybackState.STATE_PAUSED else PlaybackState.STATE_PLAYING,
+                PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+                if (volume == 0f) 0f else 1f,
+            )
+            .build())
     }
 
     private fun promote() {

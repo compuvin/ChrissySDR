@@ -42,6 +42,12 @@ class AndroidAudioOutput(val sampleRate: Int) : AutoCloseable {
         check(written >= 0) { "Android audio write failed ($written)" }
     }
 
+    fun setVolume(volume: Float) {
+        check(track.setVolume(volume.coerceIn(0f, 1f)) >= 0) {
+            "Android audio volume could not be changed"
+        }
+    }
+
     override fun close() {
         runCatching { track.pause(); track.flush(); track.stop() }
         track.release()

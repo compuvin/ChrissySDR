@@ -12,6 +12,19 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-02 — RX audio focus
+
+- **App version:** `0.5.2-dev.11` local debug build; not published.
+- **Scope:** RX requests Android audio focus before starting playback and
+  abandons it on RX stop, error, TX switch, or service shutdown. Transient focus
+  loss mutes without pausing the incoming stream; duckable loss lowers volume;
+  focus gain restores volume. Permanent focus loss stops RX without retrying.
+  The media session reflects transient pause/resume state.
+- **Device result:** Pending test with another audio app and interruptions,
+  including returning to RX after transient loss and stopping after permanent
+  loss.
+- **Automated result:** Debug build and unit tests passed.
+
 ## 2026-10-02 — Explicit profile persistence for RX controls
 
 - **App version:** `0.5.2-dev.10` local debug build; not published.
