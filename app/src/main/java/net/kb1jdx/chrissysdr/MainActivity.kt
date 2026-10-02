@@ -2,6 +2,8 @@ package com.kb1jdx.chrissysdr
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
@@ -66,6 +68,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -948,6 +951,9 @@ private fun SettingsSheet(
 ) {
     var showUnknownRangeWarning by remember { mutableStateOf(false) }
     var showAdditionalRadioInfo by remember { mutableStateOf(false) }
+    var showDiagnostics by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val diagnostics = diagnosticsText(state, version)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1098,6 +1104,15 @@ private fun SettingsSheet(
             }
         }
 
+        HorizontalDivider(Modifier.padding(vertical = 16.dp))
+        Text("Diagnostics", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Connection, radio, stream, and recent error information.", fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton(
+            onClick = { showDiagnostics = true },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        ) { Text("View diagnostics") }
+
         Text(
             "ChrissySDR $version",
             modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
@@ -1121,6 +1136,40 @@ private fun SettingsSheet(
             },
             confirmButton = {
                 TextButton(onClick = { showAdditionalRadioInfo = false }) { Text("Close") }
+            },
+        )
+    }
+
+    if (showDiagnostics) {
+        AlertDialog(
+            onDismissRequest = { showDiagnostics = false },
+            title = { Text("Diagnostics") },
+            text = {
+                Text(
+                    diagnostics,
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                )
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = {
+                        context.getSystemService(ClipboardManager::class.java)
+                            .setPrimaryClip(ClipData.newPlainText("ChrissySDR diagnostics", diagnostics))
+                    }) { Text("Copy") }
+                    TextButton(onClick = {
+                        val share = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, "ChrissySDR diagnostics")
+                            putExtra(Intent.EXTRA_TEXT, diagnostics)
+                        }
+                        context.startActivity(Intent.createChooser(share, "Share diagnostics"))
+                    }) { Text("Share") }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDiagnostics = false }) { Text("Close") }
             },
         )
     }

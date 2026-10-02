@@ -33,6 +33,7 @@ class SoapyRemoteRxSession private constructor(
     private val status: Socket,
     private val streamId: Int,
     val inputSampleRate: Double,
+    val appliedHardwareBandwidthHz: Double?,
     val spectrumSampleRate: Double,
     private val streamFormat: String,
     private val fullScale: Double,
@@ -232,6 +233,7 @@ class SoapyRemoteRxSession private constructor(
         private const val DEACTIVATE_STREAM = 303
         private const val SET_FREQUENCY = 800
         private const val SET_BANDWIDTH = 903
+        private const val GET_BANDWIDTH = 904
         private const val SET_ANTENNA = 501
         private const val SET_GAIN_MODE = 701
         private const val SET_GAIN_ELEMENT = 704
@@ -322,6 +324,9 @@ class SoapyRemoteRxSession private constructor(
                 val appliedSampleRate = transact(
                     SoapyRpcWriter().call(GET_SAMPLE_RATE).char(RX).int32(0),
                 ) { it.float64() }
+                val appliedHardwareBandwidth = runCatching {
+                    transact(SoapyRpcWriter().call(GET_BANDWIDTH).char(RX).int32(0)) { it.float64() }
+                }.getOrNull()?.takeIf { it.isFinite() && it > 0.0 }
                 require(appliedSampleRate >= MIN_RADIO_SAMPLE_RATE) {
                     "Radio applied an unusable sample rate: $appliedSampleRate Hz"
                 }
@@ -369,6 +374,7 @@ class SoapyRemoteRxSession private constructor(
                 sendAck(stream!!.getOutputStream(), 0, FLOW_WINDOW_PACKETS)
                 return SoapyRemoteRxSession(
                     control, stream!!, status!!, streamId, appliedSampleRate,
+                    appliedHardwareBandwidth,
                     minOf(appliedSampleRate, MAX_SPECTRUM_RATE), format, fullScale,
                     bandwidthHz, mode, nfmAudioCutoffHz, nfmDeemphasisUs,
                 )

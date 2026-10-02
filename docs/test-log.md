@@ -12,6 +12,28 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-02 — In-app diagnostics
+
+- **App version:** `0.5.2-dev.9` local debug build; not published.
+- **Scope:** Settings now opens a scrollable Diagnostics view with Copy and
+  Share. It includes server/device information, selected stream format and
+  bandwidth, applied sample-rate and optional bandwidth readback, measured RX
+  stream rate and sequence gaps, observed Soapy RX overflow/TX underflow errors,
+  and the five most recent connection or stream errors. Counters not supplied
+  by the client are explicitly labeled as not reported.
+- **Device result:** Pending live-radio verification and visual review.
+- **Automated result:** Debug build and unit tests passed.
+
+## 2026-10-02 — RX media notification
+
+- **App version:** `0.5.2-dev.8` local debug build; not published.
+- **Scope:** Active RX notification now uses an Android media session and shows
+  the tuned frequency and mode, with a compact Stop action. TX retains a
+  non-media notification. The media session is deactivated when RX stops.
+- **Device result:** Pending on-device verification of the notification,
+  lock-screen display, Stop action, and transitions between RX and TX.
+- **Automated result:** Debug build and unit tests passed.
+
 ## 2026-10-02 — NFM receive DSP
 
 - **App version:** `0.5.2-dev.7` local debug build; not published.

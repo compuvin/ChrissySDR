@@ -66,6 +66,7 @@ class SoapyRemoteBackend(
         )
         return object : RadioReceiver {
             override val appliedSampleRate = session.inputSampleRate
+            override val appliedHardwareBandwidth = session.appliedHardwareBandwidthHz
             override fun start(
                 onStatistics: (ReceiverStatistics) -> Unit,
                 onSpectrum: (SpectrumFrame) -> Unit,

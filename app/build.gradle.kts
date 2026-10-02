@@ -12,8 +12,8 @@ android {
         applicationId = "com.kb1jdx.chrissysdr"
         minSdk = 26
         targetSdk = 37
-        versionCode = 22
-        versionName = "0.5.2-dev.7"
+        versionCode = 24
+        versionName = "0.5.2-dev.9"
     }
 
     buildFeatures {

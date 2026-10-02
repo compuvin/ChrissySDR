@@ -44,6 +44,15 @@ data class RadioUiState(
     val sampleRateOptions: List<Double> = emptyList(),
     val sampleRateAutomatic: Boolean = true,
     val appliedSampleRateHz: Double? = null,
+    val rxStreamFormat: String? = null,
+    val rxRequestedSampleRateHz: Double? = null,
+    val rxHardwareBandwidthHz: Double? = null,
+    val rxAppliedHardwareBandwidthHz: Double? = null,
+    val rxStreamRateHz: Double? = null,
+    val rxSequenceGaps: Long? = null,
+    val observedRxOverflows: Int = 0,
+    val observedTxUnderflows: Int = 0,
+    val recentErrors: List<String> = emptyList(),
     val mode: String = "AM",
     val nfmAudioCutoffHz: Double = 3_000.0,
     val nfmDeemphasisUs: Int = 75,
@@ -239,6 +248,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         connectionStatus = failure.displayMessage,
                         profileStatus = failure.displayMessage,
                         lastError = failure,
+                        recentErrors = (it.recentErrors + failure.displayMessage).takeLast(5),
                     )
                 }
             }
@@ -569,6 +579,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                             connectionStatus = failure.displayMessage,
                             connectionState = RadioConnectionState.FAILED,
                             lastError = failure,
+                            recentErrors = (it.recentErrors + failure.displayMessage).takeLast(5),
                         )
                     }
                 }
@@ -604,6 +615,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                             connectionStatus = failure.displayMessage,
                             connectionState = RadioConnectionState.FAILED,
                             lastError = failure,
+                            recentErrors = (it.recentErrors + failure.displayMessage).takeLast(5),
                         )
                     }
                 }
@@ -832,6 +844,17 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             rxHardwareAgc = rxHardwareAgcOverride,
         )
         val generation = rxGeneration.incrementAndGet()
+        mutableState.update {
+            it.copy(
+                rxStreamFormat = format.format,
+                rxRequestedSampleRateHz = sampleRate,
+                rxHardwareBandwidthHz = hardwareBandwidth,
+                appliedSampleRateHz = null,
+                rxAppliedHardwareBandwidthHz = null,
+                rxStreamRateHz = null,
+                rxSequenceGaps = null,
+            )
+        }
         radioService?.cancelPendingReceiver()
         openReceiver(config, generation, 0)
     }
@@ -872,6 +895,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                                         append(" • RMS %.1f dBFS".format(stats.rmsDbfs))
                                         append(" • gaps ${stats.sequenceGaps}")
                                     },
+                                    rxStreamRateHz = stats.samplesPerSecond,
+                                    rxSequenceGaps = stats.sequenceGaps,
                                 )
                             }
                         }
@@ -900,7 +925,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     },
                     isCancelled = { generation != rxGeneration.get() },
                 )
-            }.onSuccess { appliedSampleRate ->
+            }.onSuccess { applied ->
                 if (!failed.get() && generation == rxGeneration.get()) {
                     mutableState.update {
                         it.copy(
@@ -909,14 +934,15 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                             connectionState = RadioConnectionState.CONNECTED,
                             connectionStatus = "Connected to ${config.endpoint.host}:${config.endpoint.port}",
                             lastError = null,
-                            appliedSampleRateHz = appliedSampleRate,
+                            appliedSampleRateHz = applied.sampleRate,
+                            rxAppliedHardwareBandwidthHz = applied.hardwareBandwidth,
                             spectrumSpanHz = it.spectrumSpanHz?.takeIf { span ->
-                                span <= minOf(appliedSampleRate, 48_000.0)
+                                span <= minOf(applied.sampleRate, 48_000.0)
                             },
                             rxGainValues = it.rxGainValues + config.rxGains,
                             rxHardwareAgc = config.rxHardwareAgc ?: it.rxHardwareAgc,
                             rxAntenna = config.rxAntenna ?: it.rxAntenna,
-                            rxStatus = "${config.mode} audio active • applied ${formatHz(appliedSampleRate)}",
+                            rxStatus = "${config.mode} audio active • applied ${formatHz(applied.sampleRate)}",
                             profileStatus = if (it.activeProfileId != null) {
                                 "Receiving with ${it.profileName}"
                             } else it.profileStatus,
@@ -952,6 +978,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     connectionState = RadioConnectionState.RECONNECTING,
                     connectionStatus = "Reconnecting to ${config.endpoint.host}…",
                     lastError = failure,
+                    recentErrors = (it.recentErrors + failure.displayMessage).takeLast(5),
+                    observedRxOverflows = it.observedRxOverflows +
+                        if (error.isSoapyStreamCode(-4)) 1 else 0,
                     rxStatus = "${failure.displayMessage}; retrying RX ($nextRetry/${RxReconnectPolicy.MAX_RETRIES})",
                 )
             }
@@ -969,6 +998,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     connectionState = RadioConnectionState.FAILED,
                     connectionStatus = "RX connection failed",
                     lastError = failure,
+                    recentErrors = (it.recentErrors + failure.displayMessage).takeLast(5),
+                    observedRxOverflows = it.observedRxOverflows +
+                        if (error.isSoapyStreamCode(-4)) 1 else 0,
                     rxStatus = failure.displayMessage,
                 )
             }
@@ -1056,7 +1088,14 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     onStopped = { stopTransmitter("AM TX time limit reached") },
                     onError = { error ->
                         val failure = RadioFailure.from("AM TX failed", error)
-                        mutableState.update { it.copy(lastError = failure) }
+                        mutableState.update {
+                            it.copy(
+                                lastError = failure,
+                                recentErrors = (it.recentErrors + failure.displayMessage).takeLast(5),
+                                observedTxUnderflows = it.observedTxUnderflows +
+                                    if (error.isSoapyStreamCode(-7)) 1 else 0,
+                            )
+                        }
                         stopTransmitter(failure.displayMessage)
                     },
                 )
@@ -1081,6 +1120,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         txActive = false,
                         txBusy = false,
                         lastError = failure,
+                        recentErrors = (it.recentErrors + failure.displayMessage).takeLast(5),
+                        observedTxUnderflows = it.observedTxUnderflows +
+                            if (error.isSoapyStreamCode(-7)) 1 else 0,
                         txStatus = failure.displayMessage,
                     )
                 }

@@ -66,18 +66,18 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 ### 0.6 — Complete Receiver Release
 
 - [ ] Move active RX into a foreground media service with:
-  - [ ] Media-style notification showing frequency and mode.
+  - [x] Media-style notification showing frequency and mode.
   - [x] Stop control.
   - [ ] Audio focus handling.
   - [ ] Headphone/Bluetooth route-change handling.
   - [ ] Reliable cleanup on app removal, service stop, connection loss, or radio error.
 - [ ] Persist the last server, port, device, frequency, mode, filter, gains, and advanced overrides locally.
 - [ ] Add reconnect and restore-session behavior, without automatically reopening or keying hardware after an app restart.
-- [ ] Provide an in-app diagnostics view with copy/share support for:
-  - [ ] Server and device information.
-  - [ ] Negotiated format/rate/bandwidth.
-  - [ ] Stream rate, underruns/overruns, sequence gaps, and recent errors.
-- [ ] Produce reproducible personal/test APKs with visible semantic development versions.
+- [x] Provide an in-app diagnostics view with copy/share support for:
+  - [x] Server and device information.
+  - [x] Negotiated format/rate/bandwidth.
+  - [x] Stream rate, underruns/overruns, sequence gaps, and recent errors.
+- [x] Produce reproducible personal/test APKs with visible semantic development versions.
 - [ ] Acceptance gate: sustained AM/NFM/USB/LSB reception, stable background audio, correct spectrum tuning, and clean start/stop behavior on the FLEX-1500 plus a second device or simulated server using a substantially different sample rate.
 
 ### 0.7 — Safe Soapy Voice Transmit
