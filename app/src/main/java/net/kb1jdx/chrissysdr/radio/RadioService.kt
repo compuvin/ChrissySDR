@@ -20,6 +20,7 @@ import android.os.Binder
 import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
+import android.os.Build
 import androidx.core.content.ContextCompat
 import com.kb1jdx.chrissysdr.MainActivity
 import com.kb1jdx.chrissysdr.R
@@ -41,6 +42,7 @@ class RadioService : Service() {
     private lateinit var rxFocusRequest: AudioFocusRequest
     private var rxFocusRequested = false
     private var rxAudioVolume = 1f
+    private var rxUserPaused = false
     @Volatile private var pendingRxOpen: RadioOpenCancellation? = null
     @Volatile private var stateListener: ((Boolean, Boolean) -> Unit)? = null
     @Volatile private var externalStopListener: ((String) -> Unit)? = null
@@ -65,6 +67,8 @@ class RadioService : Service() {
         mediaSession = MediaSession(this, "ChrissySDR").apply {
             setCallback(object : MediaSession.Callback() {
                 override fun onStop() = stopRadioService()
+                override fun onPause() = setRxPaused(true)
+                override fun onPlay() = setRxPaused(false)
             })
         }
         audioManager = getSystemService(AudioManager::class.java)
@@ -93,6 +97,8 @@ class RadioService : Service() {
             stopRadioService("Radio stopped from notification")
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_PAUSE_RX) setRxPaused(true)
+        if (intent?.action == ACTION_RESUME_RX) setRxPaused(false)
         return if (isStreaming()) START_STICKY else START_NOT_STICKY
     }
 
@@ -140,6 +146,7 @@ class RadioService : Service() {
                 receiverConfig = config
                 promote()
                 check(requestRxAudioFocus()) { "Android audio focus is unavailable" }
+                rxUserPaused = false
                 session.setAudioVolume(rxAudioVolume)
                 session.start(
                     onStatistics = onStatistics,
@@ -196,6 +203,7 @@ class RadioService : Service() {
             val current = receiver
             receiver = null
             receiverConfig = null
+            rxUserPaused = false
             current
         }
         runCatching { session?.close() }
@@ -387,15 +395,18 @@ class RadioService : Service() {
             rxAudioVolume = volume
             receiver
         }
-        runCatching { session?.setAudioVolume(volume) }
-        if (session != null) mediaSession.setPlaybackState(PlaybackState.Builder()
-            .setActions(PlaybackState.ACTION_STOP)
-            .setState(
-                if (volume == 0f) PlaybackState.STATE_PAUSED else PlaybackState.STATE_PLAYING,
-                PlaybackState.PLAYBACK_POSITION_UNKNOWN,
-                if (volume == 0f) 0f else 1f,
-            )
-            .build())
+        runCatching { session?.setAudioVolume(if (rxUserPaused) 0f else volume) }
+        if (session != null) updateForegroundState()
+    }
+
+    private fun setRxPaused(paused: Boolean) {
+        val session = synchronized(lock) {
+            if (receiver == null) return
+            rxUserPaused = paused
+            receiver
+        }
+        runCatching { session?.setAudioVolume(if (paused) 0f else rxAudioVolume) }
+        updateForegroundState()
     }
 
     private fun promote() {
@@ -424,14 +435,14 @@ class RadioService : Service() {
     }
 
     private fun notification(): Notification {
-        val (rx, tx) = synchronized(lock) { receiverConfig to transmitterConfig }
+        val (rx, tx, paused) = synchronized(lock) { Triple(receiverConfig, transmitterConfig, rxUserPaused) }
         val builder = Notification.Builder(this, NOTIFICATION_CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle(rx?.let { formatFrequency(it.frequencyHz) }
                 ?: tx?.let { formatFrequency(it.frequencyHz) }
                 ?: "ChrissySDR")
             .setContentText(when {
-                rx != null -> "${rx.mode.uppercase()} • Receiving"
+                rx != null -> "${rx.mode.uppercase()} • ${if (paused) "Audio paused; RX active" else "Receiving"}"
                 tx != null -> "Transmitting"
                 else -> "Radio active"
             })
@@ -445,7 +456,7 @@ class RadioService : Service() {
             ))
             .addAction(Notification.Action.Builder(
                 Icon.createWithResource(this, R.drawable.ic_stop),
-                "Stop",
+                "Stop audio",
                 PendingIntent.getService(
                     this,
                     1,
@@ -454,19 +465,31 @@ class RadioService : Service() {
                 ),
             ).build())
 
+        if (rx != null) builder.addAction(Notification.Action.Builder(
+            Icon.createWithResource(this, if (paused) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause),
+            if (paused) "Resume audio" else "Pause audio",
+            PendingIntent.getService(
+                this,
+                2,
+                Intent(this, RadioService::class.java).setAction(if (paused) ACTION_RESUME_RX else ACTION_PAUSE_RX),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            ),
+        ).build())
+
         if (rx != null) {
             mediaSession.setMetadata(MediaMetadata.Builder()
                 .putString(MediaMetadata.METADATA_KEY_TITLE, formatFrequency(rx.frequencyHz))
                 .putString(MediaMetadata.METADATA_KEY_ARTIST, "${rx.mode.uppercase()} • ChrissySDR")
                 .build())
             mediaSession.setPlaybackState(PlaybackState.Builder()
-                .setActions(PlaybackState.ACTION_STOP)
-                .setState(PlaybackState.STATE_PLAYING, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1f)
+                .setActions(PlaybackState.ACTION_STOP or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY)
+                .setState(if (paused) PlaybackState.STATE_PAUSED else PlaybackState.STATE_PLAYING,
+                    PlaybackState.PLAYBACK_POSITION_UNKNOWN, if (paused) 0f else 1f)
                 .build())
-            mediaSession.isActive = true
-            builder.setStyle(Notification.MediaStyle()
+            mediaSession.isActive = Build.VERSION.SDK_INT < 33
+            if (Build.VERSION.SDK_INT < 33) builder.setStyle(Notification.MediaStyle()
                 .setMediaSession(mediaSession.sessionToken)
-                .setShowActionsInCompactView(0))
+                .setShowActionsInCompactView(0, 1))
         } else {
             mediaSession.isActive = false
         }
@@ -477,6 +500,8 @@ class RadioService : Service() {
         private const val NOTIFICATION_CHANNEL = "active_radio"
         private const val NOTIFICATION_ID = 1500
         private const val ACTION_STOP = "com.kb1jdx.chrissysdr.STOP_RADIO"
+        private const val ACTION_PAUSE_RX = "com.kb1jdx.chrissysdr.PAUSE_RX"
+        private const val ACTION_RESUME_RX = "com.kb1jdx.chrissysdr.RESUME_RX"
     }
 }
 

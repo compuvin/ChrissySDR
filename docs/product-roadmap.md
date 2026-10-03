@@ -107,6 +107,7 @@ After safe Soapy TX:
 - [ ] Additional screen sizes/orientations, external PTT controls, and broader hardware validation.
 - [ ] Public-release work such as signing, accessibility review, privacy documentation, and store compliance.
 - [ ] Repeater options - +/- offset, PL tone
+- [ ] Squelch for FM mode
 
 ## Core Interfaces and Data Flow
 

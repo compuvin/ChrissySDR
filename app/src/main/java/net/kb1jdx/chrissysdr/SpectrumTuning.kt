@@ -4,6 +4,14 @@ import kotlin.math.round
 
 /** Screen x grows to the right; positive IQ frequencies are right of center. */
 internal object SpectrumTuning {
+    /** Pinch distance is relative to the distance at the start of the gesture. */
+    fun zoomSpan(startSpanHz: Double, scale: Double, maximumHz: Double): Double? {
+        if (!startSpanHz.isFinite() || startSpanHz <= 0.0 || !scale.isFinite() || scale <= 0.0 ||
+            !maximumHz.isFinite() || maximumHz <= 0.0
+        ) return null
+        return (startSpanHz / scale).coerceIn(minOf(1_000.0, maximumHz), maximumHz)
+    }
+
     fun tap(centerHz: Double, spanHz: Double, x: Float, width: Float, stepHz: Double): Double? =
         target(centerHz, spanHz, x.toDouble() / width - 0.5, stepHz, width, 0.5)
 

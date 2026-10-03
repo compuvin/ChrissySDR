@@ -5,6 +5,13 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SpectrumTuningTest {
+    @Test fun pinchZoomsContinuouslyAndClampsToAvailableRate() {
+        assertEquals(12_000.0, SpectrumTuning.zoomSpan(24_000.0, 2.0, 48_000.0)!!, 0.0)
+        assertEquals(48_000.0, SpectrumTuning.zoomSpan(24_000.0, 0.1, 48_000.0)!!, 0.0)
+        assertEquals(1_000.0, SpectrumTuning.zoomSpan(24_000.0, 100.0, 48_000.0)!!, 0.0)
+        assertNull(SpectrumTuning.zoomSpan(24_000.0, 0.0, 48_000.0))
+    }
+
     @Test fun tapMapsVisibleSpectrumAndSnapsToStep() {
         assertEquals(7_200_000.0, SpectrumTuning.tap(7_200_000.0, 24_000.0, 500f, 1000f, 100.0)!!, 0.0)
         assertEquals(7_206_000.0, SpectrumTuning.tap(7_200_000.0, 24_000.0, 750f, 1000f, 100.0)!!, 0.0)

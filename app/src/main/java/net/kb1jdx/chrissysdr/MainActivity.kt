@@ -19,8 +19,6 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,6 +63,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -77,6 +76,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -127,13 +128,14 @@ class MainActivity : ComponentActivity() {
         setContent {
             ChrissySdrTheme {
                 val state by radio.state.collectAsStateWithLifecycle()
+                var microphoneRequestedForTx by remember { mutableStateOf(false) }
                 val microphonePermission = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission(),
                 ) { granted ->
-                    radio.setPermissionMessage(
-                        if (granted) "Microphone ready for AM transmit"
-                        else "Microphone access denied; AM transmit cannot start",
-                    )
+                    if (!granted && microphoneRequestedForTx) {
+                        radio.reportTxAttemptError("Microphone access denied; AM transmit cannot start")
+                    }
+                    microphoneRequestedForTx = false
                 }
                 var pendingProfileId by remember { mutableStateOf<String?>(null) }
                 val localNetworkPermission = rememberLauncherForActivityResult(
@@ -216,16 +218,16 @@ class MainActivity : ComponentActivity() {
                         if (state.txActive) {
                             radio.stopTransmitter()
                             true
-                        } else if (
-                            checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-                            PackageManager.PERMISSION_GRANTED
-                        ) {
-                            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-                            false
                         } else {
                             val error = radio.validateTransmit()
                             if (error != null) {
-                                radio.setPermissionMessage(error)
+                                radio.reportTxAttemptError(error)
+                                false
+                            } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                                PackageManager.PERMISSION_GRANTED
+                            ) {
+                                microphoneRequestedForTx = true
+                                microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
                                 false
                             } else {
                                 true
@@ -285,10 +287,6 @@ private fun RadioScreen(
     var activeSheet by rememberSaveable { mutableStateOf<RadioSheet?>(null) }
     var quickConnectExpanded by remember { mutableStateOf(false) }
     var showTransmitConfirmation by remember { mutableStateOf(false) }
-    val txUnavailableReason = TxControlPolicy.unavailableReason(
-        state.mode, state.txAvailable, state.txStatus, state.frequency, state.txFrequencyRanges,
-    )
-
     Scaffold(
         containerColor = RadioBackground,
         topBar = {
@@ -313,7 +311,6 @@ private fun RadioScreen(
                 mode = state.mode,
                 transmitting = state.txActive,
                 txBusy = state.txBusy,
-                txUnavailableReason = txUnavailableReason,
                 onOpenControls = { activeSheet = RadioSheet.OPERATING },
                 onTx = {
                     if (state.txActive) {
@@ -337,9 +334,10 @@ private fun RadioScreen(
                     .weight(1f),
                 state = state,
                 onTuneFrequency = onSpectrumTune,
+                onSpanChanged = onSpectrumSpanChanged,
             )
             Spacer(Modifier.height(12.dp))
-            StatusPanel(state, txUnavailableReason)
+            StatusPanel(state)
         }
     }
 
@@ -360,7 +358,6 @@ private fun RadioScreen(
                     onTuningStepChanged = onTuningStepChanged,
                     onRxGainChanged = onRxGainChanged,
                     onRxHardwareAgcChanged = onRxHardwareAgcChanged,
-                    onSpectrumSpanChanged = onSpectrumSpanChanged,
                     onStartRx = onStartRx,
                     onStopRx = onStopRx,
                 )
@@ -374,6 +371,7 @@ private fun RadioScreen(
                     onSpectrumAveragingChanged = onSpectrumAveragingChanged,
                     onSpectrumFloorChanged = onSpectrumFloorChanged,
                     onSpectrumRangeChanged = onSpectrumRangeChanged,
+                    onSpectrumSpanChanged = onSpectrumSpanChanged,
                     onAllowUnknownTxRange = onAllowUnknownTxRange,
                     onDiscover = onDiscover,
                     onInspect = onInspect,
@@ -491,11 +489,16 @@ private fun SpectrumDisplay(
     modifier: Modifier,
     state: RadioUiState,
     onTuneFrequency: (Double) -> Unit,
+    onSpanChanged: (Double?) -> Unit,
 ) {
     val frame = state.spectrum
     val spanHz = frame?.let { (state.spectrumSpanHz ?: it.sampleRateHz).coerceAtMost(it.sampleRateHz) }
     val centerFrequency = frame?.centerFrequencyHz ?: state.frequency.toDoubleOrNull()
     var dragPreviewHz by remember { mutableStateOf<Double?>(null) }
+    var dragOffsetPx by remember { mutableStateOf(0f) }
+    val latestState by rememberUpdatedState(state)
+    val latestTune by rememberUpdatedState(onTuneFrequency)
+    val latestSpanChange by rememberUpdatedState(onSpanChanged)
     Card(
         modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = SpectrumBackground),
@@ -504,35 +507,65 @@ private fun SpectrumDisplay(
         Box(Modifier.fillMaxSize()) {
             Canvas(
                 Modifier.fillMaxSize().padding(12.dp)
-                    .pointerInput(frame?.centerFrequencyHz, spanHz, state.tuningStepHz) {
-                        detectTapGestures { position ->
-                            val center = frame?.centerFrequencyHz
-                            val span = spanHz
-                            if (center != null && span != null && !state.rxBusy) {
-                                SpectrumTuning.tap(
-                                    center, span, position.x, size.width.toFloat(), state.tuningStepHz,
-                                )?.let(onTuneFrequency)
-                            }
-                        }
-                    }
-                    .pointerInput(frame?.centerFrequencyHz, spanHz, state.tuningStepHz) {
-                        var distance = 0f
-                        detectDragGestures(
-                            onDragStart = { distance = 0f; dragPreviewHz = null },
-                            onDragEnd = {
-                                dragPreviewHz?.let(onTuneFrequency)
-                                dragPreviewHz = null
-                            },
-                            onDragCancel = { dragPreviewHz = null },
-                        ) { change, dragAmount ->
-                            val center = frame?.centerFrequencyHz
-                            val span = spanHz
-                            if (center != null && span != null && !state.rxBusy) {
-                                distance += dragAmount.x
-                                dragPreviewHz = SpectrumTuning.drag(
-                                    center, span, distance, size.width.toFloat(), state.tuningStepHz,
-                                )
-                                change.consume()
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val initialFrame = latestState.spectrum
+                            if (initialFrame == null || latestState.rxBusy) return@awaitEachGesture
+                            val initialSpan = (latestState.spectrumSpanHz ?: initialFrame.sampleRateHz)
+                                .coerceAtMost(initialFrame.sampleRateHz)
+                            val center = initialFrame.centerFrequencyHz
+                            val step = latestState.tuningStepHz
+                            val touchSlop = viewConfiguration.touchSlop
+                            var dragging = false
+                            var pinching = false
+                            var pinchDistance = 0f
+                            var pinchSpan = initialSpan
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val pressed = event.changes.filter { it.pressed }
+                                if (pressed.size >= 2) {
+                                    if (!pinching) {
+                                        pinching = true
+                                        pinchSpan = latestState.spectrumSpanHz ?: initialFrame.sampleRateHz
+                                        dragPreviewHz = null
+                                        dragOffsetPx = 0f
+                                    }
+                                    val distance = (pressed[0].position - pressed[1].position).getDistance()
+                                    if (pinchDistance == 0f) pinchDistance = distance
+                                    val maximum = minOf(initialFrame.sampleRateHz, 48_000.0)
+                                    val zoomed = SpectrumTuning.zoomSpan(
+                                        pinchSpan, distance.toDouble() / pinchDistance, maximum,
+                                    )
+                                    zoomed?.let(latestSpanChange)
+                                    pressed.forEach { it.consume() }
+                                } else if (pressed.isEmpty()) {
+                                    if (!pinching) {
+                                        if (dragging) dragPreviewHz?.let(latestTune)
+                                        else SpectrumTuning.tap(
+                                            center, initialSpan, down.position.x,
+                                            size.width.toFloat(), step,
+                                        )?.let(latestTune)
+                                    }
+                                    dragPreviewHz = null
+                                    dragOffsetPx = 0f
+                                    break
+                                } else if (!pinching) {
+                                    val position = pressed[0].position
+                                    if (!dragging && (position - down.position).getDistance() > touchSlop) {
+                                        dragging = true
+                                    }
+                                    if (dragging) {
+                                        val distance = position.x - down.position.x
+                                        dragOffsetPx = distance.coerceIn(
+                                            -size.width.toFloat(), size.width.toFloat(),
+                                        )
+                                        dragPreviewHz = SpectrumTuning.drag(
+                                            center, initialSpan, distance, size.width.toFloat(), step,
+                                        )
+                                        pressed[0].consume()
+                                    }
+                                }
                             }
                         }
                     },
@@ -570,12 +603,18 @@ private fun SpectrumDisplay(
                     val bins = frame.binsDbfs
                     val path = Path()
                     val points = size.width.toInt().coerceIn(2, bins.size)
+                    var pathStarted = false
+                    val visibleShift = dragOffsetPx / size.width
                     for (point in 0 until points) {
                         val fraction = point.toDouble() / (points - 1)
-                        val frequencyOffset = (fraction - 0.5) * spanHz
+                        val frequencyOffset = (fraction - 0.5 - visibleShift) * spanHz
+                        if (frequencyOffset !in -frame.sampleRateHz / 2..frame.sampleRateHz / 2) {
+                            pathStarted = false
+                            continue
+                        }
                         val bin = ((frequencyOffset / frame.sampleRateHz + 0.5) * bins.size)
                             .toInt().coerceIn(0, bins.lastIndex)
-                        val nextOffset = ((point + 1.0) / (points - 1) - 0.5) * spanHz
+                        val nextOffset = ((point + 1.0) / (points - 1) - 0.5 - visibleShift) * spanHz
                         val nextBin = ((nextOffset / frame.sampleRateHz + 0.5) * bins.size)
                             .toInt().coerceIn(bin, bins.lastIndex)
                         var peak = bins[bin]
@@ -584,7 +623,8 @@ private fun SpectrumDisplay(
                             state.spectrumRangeDb).coerceIn(0f, 1f)
                         val x = size.width * fraction.toFloat()
                         val y = size.height * (1f - level)
-                        if (point == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                        if (!pathStarted) path.moveTo(x, y) else path.lineTo(x, y)
+                        pathStarted = true
                     }
                     drawPath(path, SpectrumTrace, style = Stroke(2f, cap = StrokeCap.Round))
                 }
@@ -621,9 +661,10 @@ private fun SpectrumDisplay(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 val halfSpan = (spanHz ?: 0.0) / 2.0
-                Text(displayFrequency(centerFrequency?.minus(halfSpan)), fontSize = 10.sp,
+                val displayedCenter = dragPreviewHz ?: centerFrequency
+                Text(displayFrequency(displayedCenter?.minus(halfSpan)), fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace, color = Color.White)
-                Text(displayFrequency(centerFrequency?.plus(halfSpan)), fontSize = 10.sp,
+                Text(displayFrequency(displayedCenter?.plus(halfSpan)), fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace, color = Color.White)
             }
         }
@@ -631,7 +672,7 @@ private fun SpectrumDisplay(
 }
 
 @Composable
-private fun StatusPanel(state: RadioUiState, txUnavailableReason: String?) {
+private fun StatusPanel(state: RadioUiState) {
     Card(
         colors = CardDefaults.cardColors(containerColor = RadioPanel),
         shape = RoundedCornerShape(14.dp),
@@ -647,8 +688,8 @@ private fun StatusPanel(state: RadioUiState, txUnavailableReason: String?) {
                 fontSize = 13.sp,
                 fontWeight = if (state.txActive) FontWeight.Bold else FontWeight.Normal,
             )
-            if (!state.txActive && txUnavailableReason != null) {
-                Text(txUnavailableReason, fontSize = 11.sp,
+            if (!state.txActive && state.txAttemptError != null) {
+                Text(state.txAttemptError, fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -661,7 +702,6 @@ private fun OperatingBar(
     mode: String,
     transmitting: Boolean,
     txBusy: Boolean,
-    txUnavailableReason: String?,
     onOpenControls: () -> Unit,
     onTx: () -> Unit,
 ) {
@@ -685,7 +725,7 @@ private fun OperatingBar(
             }
             Button(
                 onClick = onTx,
-                enabled = (txUnavailableReason == null || transmitting) && !txBusy,
+                enabled = !txBusy,
                 modifier = Modifier.size(70.dp),
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(
@@ -721,7 +761,6 @@ private fun OperatingControlsSheet(
     onTuningStepChanged: (Double) -> Unit,
     onRxGainChanged: (String, Double) -> Unit,
     onRxHardwareAgcChanged: (Boolean) -> Unit,
-    onSpectrumSpanChanged: (Double?) -> Unit,
     onStartRx: () -> Unit,
     onStopRx: () -> Unit,
 ) {
@@ -885,7 +924,6 @@ private fun OperatingControlsSheet(
             Text("Switch off Radio AGC to adjust gain", fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        SpectrumSpanSelector(state, onSpectrumSpanChanged)
         Text("Tap the spectrum to select a signal; drag and release to tune.",
             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
@@ -942,6 +980,7 @@ private fun SettingsSheet(
     onSpectrumAveragingChanged: (Float) -> Unit,
     onSpectrumFloorChanged: (Int) -> Unit,
     onSpectrumRangeChanged: (Int) -> Unit,
+    onSpectrumSpanChanged: (Double?) -> Unit,
     onAllowUnknownTxRange: (Boolean) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
@@ -1026,6 +1065,7 @@ private fun SettingsSheet(
         Text("Spectrum", fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Text("Display controls do not change the radio stream.", fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SpectrumSpanSelector(state, onSpectrumSpanChanged)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             var averagingExpanded by remember { mutableStateOf(false) }
             Box(Modifier.weight(1f)) {

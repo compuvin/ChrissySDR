@@ -92,6 +92,7 @@ data class RadioUiState(
     val txActive: Boolean = false,
     val txBusy: Boolean = false,
     val txStatus: String = "AM TX unavailable",
+    val txAttemptError: String? = null,
     val txRangesUnreported: Boolean = false,
     val allowUnknownTxRange: Boolean = false,
 )
@@ -102,6 +103,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     private val worker = Executors.newCachedThreadPool()
     private val retryScheduler = Executors.newSingleThreadScheduledExecutor()
     private val rxGeneration = AtomicLong()
+    private val txErrorGeneration = AtomicLong()
     private var pendingRxRetune: ScheduledFuture<*>? = null
     private val mutableState = MutableStateFlow(RadioUiState())
     val state: StateFlow<RadioUiState> = mutableState.asStateFlow()
@@ -203,6 +205,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         host = profile.host, port = profile.port.toString(),
                         frequency = profile.frequency, bandwidth = profile.bandwidth,
                         mode = profile.mode,
+                        txAttemptError = null,
                         devices = emptyList(), deviceDetails = "", additionalDeviceDetails = "",
                         connectionState = RadioConnectionState.CONNECTING,
                         connectionStatus = "Connecting to ${profile.name}…",
@@ -409,6 +412,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 hardwareBandwidthAvailable(passband, it.mode)
             it.copy(
                 frequency = value,
+                txAttemptError = null,
                 rxAvailable = available,
                 rxStatus = if (!validRxFrequency(value)) "Enter a valid RX frequency" else if (!it.rxActive && available)
                     "${it.mode} RX ready" else it.rxStatus,
@@ -427,6 +431,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update {
             it.copy(
                 mode = value,
+                txAttemptError = null,
                 txAvailable = value == "AM" && selectedTxCapabilities != null &&
                     (!it.txRangesUnreported || it.allowUnknownTxRange),
             )
@@ -553,6 +558,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 connectionStatus = "Connecting…",
                 connectionState = RadioConnectionState.CONNECTING,
                 lastError = null,
+                txAttemptError = null,
                 devices = emptyList(),
                 deviceDetails = "",
                 additionalDeviceDetails = "",
@@ -725,6 +731,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 deviceDetails = formatDeviceInfo(info),
                 additionalDeviceDetails = formatAdditionalDeviceInfo(info),
                 selectedDeviceLabel = choice.label,
+                txAttemptError = null,
                 profileName = choice.label,
                 activeProfileId = null,
                 sampleRateHz = rxRate,
@@ -769,6 +776,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update {
             it.copy(
                 allowUnknownTxRange = enabled,
+                txAttemptError = null,
                 txAvailable = enabled && it.mode == "AM",
                 txStatus = if (enabled) {
                     "AM TX ready with unknown hardware frequency limits; operator validation required"
@@ -1076,10 +1084,20 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun reportTxAttemptError(message: String) {
+        val generation = txErrorGeneration.incrementAndGet()
+        mutableState.update { it.copy(txAttemptError = message) }
+        retryScheduler.schedule({
+            if (generation == txErrorGeneration.get()) {
+                mutableState.update { it.copy(txAttemptError = null) }
+            }
+        }, 5, TimeUnit.SECONDS)
+    }
+
     fun startTransmitter() {
         val validation = validateTransmit()
         if (validation != null) {
-            mutableState.update { it.copy(txStatus = validation) }
+            reportTxAttemptError(validation)
             return
         }
         val snapshot = mutableState.value
@@ -1090,7 +1108,10 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         rxGeneration.incrementAndGet() // A failed or stopped TX must never revive an old RX retry.
         radioService?.cancelPendingReceiver()
         resumeRxAfterTx = snapshot.rxActive
-        mutableState.update { it.copy(txBusy = true, txStatus = "Stopping RX and opening AM TX…") }
+        mutableState.update {
+            it.copy(txBusy = true, txAttemptError = null,
+                txStatus = "Stopping RX and opening AM TX…")
+        }
         worker.execute {
             val service = radioService
             if (service == null) {

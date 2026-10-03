@@ -12,6 +12,57 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-02 — 0.5.2 test release
+
+- **App version:** `0.5.2` debug-signed APK, version code 32.
+- **Scope:** Packages the receiver, spectrum, controls, profiles, diagnostics,
+  and notification changes since 0.5.1.
+- **Device result:** Operator confirmed spectrum pinch zoom, notification
+  Stop/Pause, TX refusal message, Quick Connect/profile loading, and Diagnostics.
+  Live NFM and broader audio-interruption tests remain open.
+- **Automated result:** Debug APK assembly and unit tests passed.
+
+## 2026-10-02 — Spectrum pinch zoom
+
+- **App version:** `0.5.2-dev.16` local debug build; not published.
+- **Scope:** Two-finger pinch changes the spectrum span continuously between
+  1 kHz and the available display rate. Single-finger tap and drag still tune;
+  pinch does not tune. Preset spans remain in Settings.
+- **Device result:** Operator confirmed pinch zoom works well on the handset.
+
+## 2026-10-02 — Notification audio controls
+
+- **App version:** `0.5.2-dev.15` local debug build; not published.
+- **Scope:** Modern Android uses a standard ongoing notification with labeled
+  Stop audio and Pause/Resume audio actions instead of the tiny media Stop
+  custom action. Pause mutes playback without closing the RX stream; resume
+  restores audio subject to Android audio focus. Older Android retains its
+  media-style notification with the same two actions.
+- **Device result:** Stop and Pause confirmed working on the handset.
+
+## 2026-10-02 — TX message, media Stop, and spectrum drag preview
+
+- **App version:** `0.5.2-dev.14` local debug build; not published.
+- **Scope:** TX refusal is shown only after tapping TX and clears after five
+  seconds; safety validation still blocks unsupported TX. RX media playback
+  advertises a custom Stop action for Android 13+ controls, while retaining
+  the older notification Stop action. Spectrum trace and frequency labels now
+  follow a horizontal drag before tuning on release.
+- **Device result:** Spectrum drag confirmed responsive; tiny media Stop button
+  observed, prompting the notification control change above. Operator later
+  confirmed the TX refusal message was tested successfully; no actual TX test
+  was claimed.
+- **Automated result:** Debug build and unit tests passed.
+
+## 2026-10-02 — Spectrum control placement
+
+- **App version:** `0.5.2-dev.13` local debug build; not published.
+- **Scope:** Moved Spectrum span from Operating Controls to Settings → Spectrum
+  so all spectrum display controls are together. Tap/drag tuning instructions
+  remain in Operating Controls.
+- **Device result:** Pending visual check.
+- **Automated result:** Debug build and unit tests passed.
+
 ## 2026-10-02 — Audio route and service cleanup
 
 - **App version:** `0.5.2-dev.12` local debug build; not published.
@@ -50,8 +101,8 @@ individual experiments belong here instead.
   unsupported saved controls are skipped when a radio's capabilities change.
   The TX unknown-range override remains saved per radio. Saving is explicit;
   app startup never automatically reconnects or keys hardware.
-- **Device result:** Pending live-radio test of saving, restarting the app,
-  loading the profile, and confirming restored RX controls.
+- **Device result:** Operator later confirmed the saved-profile/Quick Connect
+  check was tested successfully. Specific restored controls were not itemized.
 - **Automated result:** Room code generation, debug build, and unit tests passed.
 
 ## 2026-10-02 — In-app diagnostics
@@ -63,7 +114,9 @@ individual experiments belong here instead.
   stream rate and sequence gaps, observed Soapy RX overflow/TX underflow errors,
   and the five most recent connection or stream errors. Counters not supplied
   by the client are explicitly labeled as not reported.
-- **Device result:** Pending live-radio verification and visual review.
+- **Device result:** Operator later confirmed the Diagnostics view, including
+  Copy and Share, was tested successfully. Specific field values were not
+  itemized.
 - **Automated result:** Debug build and unit tests passed.
 
 ## 2026-10-02 — RX media notification
