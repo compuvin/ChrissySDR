@@ -24,4 +24,18 @@ object BandwidthPolicy {
 
     fun isReported(discrete: List<Double>, ranges: List<RadioRange>): Boolean =
         discrete.isNotEmpty() || ranges.isNotEmpty()
+
+    /** Use the widest requested display window the radio can advertise. */
+    fun forSpectrum(
+        discrete: List<Double>,
+        ranges: List<RadioRange>,
+        dspWidthHz: Double,
+        displayWidthHz: Double,
+    ): Double? {
+        val maximum = (discrete.filter { it.isFinite() && it > 0.0 } +
+            ranges.mapNotNull { it.maximum.takeIf { max -> max.isFinite() && max > 0.0 } })
+            .maxOrNull() ?: return null
+        return choose(discrete, ranges, maxOf(dspWidthHz, minOf(displayWidthHz, maximum)))
+            ?: choose(discrete, ranges, dspWidthHz)
+    }
 }

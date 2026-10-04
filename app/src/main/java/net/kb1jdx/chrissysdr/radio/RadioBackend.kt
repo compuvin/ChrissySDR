@@ -85,6 +85,15 @@ data class ReceiverConfig(
     val rxGains: Map<String, Double> = emptyMap(),
     val rxAntenna: String? = null,
     val rxHardwareAgc: Boolean? = null,
+    val spectrumSpanHz: Double? = null,
+)
+
+data class ReceiverDspSettings(
+    val mode: String,
+    val passbandHz: Double,
+    val nfmAudioCutoffHz: Double,
+    val nfmDeemphasisUs: Int,
+    val hardwareBandwidthHz: Double?,
 )
 
 data class TransmitterConfig(
@@ -121,6 +130,11 @@ interface RadioReceiver : AutoCloseable {
     val appliedSampleRate: Double
     val appliedHardwareBandwidth: Double? get() = null
     fun setAudioVolume(volume: Float)
+    /** Retune hardware while keeping the receiver stream open. */
+    fun tune(frequencyHz: Double): Double
+    fun setSpectrumSpan(spanHz: Double?)
+    /** Apply mode/filter changes on the current stream; returns hardware bandwidth readback. */
+    fun reconfigure(settings: ReceiverDspSettings): Double?
     fun start(
         onStatistics: (ReceiverStatistics) -> Unit,
         onSpectrum: (SpectrumFrame) -> Unit,

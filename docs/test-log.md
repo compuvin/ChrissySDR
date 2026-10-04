@@ -12,6 +12,94 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-03 — 0.5.3 bug-fix release
+
+- **App version:** `0.5.3` debug-signed APK, version code 37.
+- **Scope:** Bug-fix release only; no new features announced. Includes the
+  accepted `0.5.3-dev.4` corrections documented below.
+- **Device result:** Operator reported all `0.5.3` bug-fix tests successful.
+- **Automated result:** Debug APK assembly and unit tests passed.
+
+## 2026-10-03 — 0.5.3 bug-fix acceptance
+
+- **App version:** `0.5.3-dev.4` local debug APK.
+- **Device result:** Operator reports that all `0.5.3` bug-fix tests completed
+  successfully. This covers notification return, stream-preserving tuning,
+  spectrum span/zoom and drag behavior, and mode changes. Individual device
+  steps and the exact 1.4 MHz recovery sequence were not separately detailed.
+- **Release status:** Accepted for the `0.5.3` bug-fix release.
+
+## 2026-10-03 — Mode changes on the existing RX stream
+
+- **App version:** `0.5.3-dev.4` local debug APK; not published.
+- **Scope:** Mode, passband, and NFM audio controls now replace the receive DSP
+  pipeline on the current SoapyRemote stream when its applied sample rate is
+  sufficient. Hardware bandwidth changes use the existing device connection.
+  A genuinely incompatible radio sample rate still requires reopening RX.
+- **Device result:** Included in the operator's successful `0.5.3` bug-fix
+  report; individual modes were not itemized.
+- **Automated result:** Debug APK assembly and unit tests passed.
+
+## 2026-10-03 — Live hardware tuning and zoom-resolution test
+
+- **App version:** `0.5.3-dev.3` local debug APK; not published.
+- **Scope:** Removed the in-IQ DSP frequency shift. Every frequency change now
+  sends a hardware tune on the existing SoapyRemote session without closing its
+  RX stream. Spectrum FFT size grows from 1,024 up to 65,536 bins as the visible
+  span narrows, so zooming reveals finer detail instead of enlarging old bins.
+- **Device result:** Operator confirmed RTL-SDR spectrum zoom-in and zoom-out
+  reveal the expected detail; FLEX-1500 tuning was included in the subsequent
+  successful `0.5.3` bug-fix report.
+- **Automated result:** Debug build and unit tests passed; the adaptive FFT is
+  also bounded to keep narrow-span updates responsive on low-rate radios.
+
+## 2026-10-03 — 0.5.3-dev.2 local test APK
+
+- **App version:** `0.5.3-dev.2` local debug-signed APK, version code 34;
+  not published.
+- **Purpose:** Retest FLEX-1500 tuning after the stream-preserving RX changes,
+  plus RTL-SDR wide spectrum and notification return behavior.
+- **Known uncertainty:** The reported SoapyRemote/flex1500d hang after a tune
+  through 1.4 MHz has not been reproduced or confirmed fixed. A live hardware
+  retune still calls into the radio driver.
+- **Automated result:** Debug build and unit tests passed.
+
+## 2026-10-03 — Wider spectrum and drag handoff
+
+- **App version:** `0.5.3-dev.2` local test build.
+- **Scope:** Spectrum display spans now follow the radio's applied sample rate
+  up to a 500 kHz cap, with wider presets exposed only when available. The
+  trace and labels retain their dragged position until the UI adopts the tuned
+  frequency, avoiding a snap back between release and tune. RX requests the
+  smallest advertised hardware bandwidth that covers the display window, or
+  the radio's maximum if that window is wider than its available filter.
+- **Device result:** Included in the operator's successful `0.5.3` bug-fix
+  report; RTL-SDR zoom detail was also confirmed explicitly.
+- **Automated result:** Debug build and unit tests passed, including spectrum
+  span limits and capability-driven hardware-bandwidth selection.
+
+## 2026-10-03 — RX tuning without stream restart
+
+- **App version:** `0.5.3-dev.1` local development build; not published.
+- **Scope:** Frequency changes within the usable IQ and hardware-filter window
+  shift the RX channel in DSP. Larger changes command a live hardware retune
+  while keeping the SoapyRemote stream open. The spectrum remains referenced to
+  the hardware center while the display follows the listening frequency.
+- **Device result:** Pending live tuning and audio-continuity test, including
+  small steps and a move outside the IQ/filter window.
+- **Automated result:** Debug build and unit tests passed, including IQ mixer
+  continuity and tune-window checks.
+- **Status:** The in-IQ DSP shift was removed in `0.5.3-dev.3`; live hardware
+  tuning on the same RX stream remains.
+
+## 2026-10-03 — Notification return to active RX
+
+- **Scope:** Notification content tap now brings the existing activity forward
+  instead of creating a second activity with a fresh, stopped-RX UI state.
+- **Device result:** Included in the operator's successful `0.5.3` bug-fix
+  report; exact notification-return steps were not itemized.
+- **Release status:** Included in the local `0.5.3-dev.2` APK; not published.
+
 ## 2026-10-02 — 0.5.2 test release
 
 - **App version:** `0.5.2` debug-signed APK, version code 32.

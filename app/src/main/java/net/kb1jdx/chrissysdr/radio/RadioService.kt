@@ -33,7 +33,7 @@ class RadioService : Service() {
     private val binder = LocalBinder()
     private val backend: RadioBackend = SoapyRemoteBackend()
     private val lock = Any()
-    private var receiver: RadioReceiver? = null
+    @Volatile private var receiver: RadioReceiver? = null
     private var transmitter: RadioTransmitter? = null
     private var receiverConfig: ReceiverConfig? = null
     private var transmitterConfig: TransmitterConfig? = null
@@ -195,6 +195,40 @@ class RadioService : Service() {
 
     fun cancelPendingReceiver() {
         pendingRxOpen?.cancel()
+    }
+
+    fun tuneReceiver(frequencyHz: Double): Double {
+        val center = synchronized(lock) {
+            val session = checkNotNull(receiver) { "RX is not running" }
+            val hardwareCenter = session.tune(frequencyHz)
+            receiverConfig = checkNotNull(receiverConfig).copy(frequencyHz = frequencyHz)
+            hardwareCenter
+        }
+        updateForegroundState()
+        return center
+    }
+
+    fun setReceiverSpectrumSpan(spanHz: Double?) {
+        receiver?.setSpectrumSpan(spanHz)
+    }
+
+    fun receiverConfiguration(): ReceiverConfig? = synchronized(lock) { receiverConfig }
+
+    fun reconfigureReceiver(settings: ReceiverDspSettings): Double? {
+        val appliedBandwidth = synchronized(lock) {
+            val session = checkNotNull(receiver) { "RX is not running" }
+            val value = session.reconfigure(settings)
+            receiverConfig = checkNotNull(receiverConfig).copy(
+                mode = settings.mode,
+                bandwidthHz = settings.passbandHz,
+                nfmAudioCutoffHz = settings.nfmAudioCutoffHz,
+                nfmDeemphasisUs = settings.nfmDeemphasisUs,
+                hardwareBandwidthHz = settings.hardwareBandwidthHz,
+            )
+            value
+        }
+        updateForegroundState()
+        return appliedBandwidth
     }
 
     fun stopReceiver() {
@@ -451,7 +485,9 @@ class RadioService : Service() {
             .setContentIntent(PendingIntent.getActivity(
                 this,
                 0,
-                Intent(this, MainActivity::class.java),
+                Intent(this, MainActivity::class.java).addFlags(
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                ),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             ))
             .addAction(Notification.Action.Builder(

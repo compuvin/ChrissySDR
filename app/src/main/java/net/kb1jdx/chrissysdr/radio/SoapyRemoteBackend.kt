@@ -62,12 +62,16 @@ class SoapyRemoteBackend(
             config.rxGains,
             config.rxAntenna,
             config.rxHardwareAgc,
+            config.spectrumSpanHz,
             cancellation,
         )
         return object : RadioReceiver {
             override val appliedSampleRate = session.inputSampleRate
             override val appliedHardwareBandwidth = session.appliedHardwareBandwidthHz
             override fun setAudioVolume(volume: Float) = session.setAudioVolume(volume)
+            override fun tune(frequencyHz: Double) = session.tune(frequencyHz)
+            override fun setSpectrumSpan(spanHz: Double?) = session.setSpectrumSpan(spanHz)
+            override fun reconfigure(settings: ReceiverDspSettings) = session.reconfigure(settings)
             override fun start(
                 onStatistics: (ReceiverStatistics) -> Unit,
                 onSpectrum: (SpectrumFrame) -> Unit,
@@ -85,7 +89,7 @@ class SoapyRemoteBackend(
                     )
                 },
                 onSpectrum = { bins ->
-                    onSpectrum(SpectrumFrame(bins, session.spectrumSampleRate, config.frequencyHz))
+                    onSpectrum(SpectrumFrame(bins, session.spectrumSampleRate, session.hardwareCenterHz))
                 },
                 onError = onError,
             )

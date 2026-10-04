@@ -38,4 +38,15 @@ class BandwidthPolicyTest {
             BandwidthPolicy.choose(emptyList(), listOf(RadioRange(0.0, 8_000_000.0, 0.0)), 12_000.0),
         )
     }
+
+    @Test fun spectrumRequestUsesAvailableHardwareWidthWithoutExceedingRadioMaximum() {
+        assertEquals(500_000.0, BandwidthPolicy.forSpectrum(
+            emptyList(), listOf(RadioRange(0.0, 8_000_000.0, 0.0)),
+            6_000.0, 500_000.0,
+        ))
+        assertEquals(20_000.0, BandwidthPolicy.forSpectrum(
+            emptyList(), listOf(RadioRange(100.0, 20_000.0, 1.0)),
+            6_000.0, 48_000.0,
+        ))
+    }
 }

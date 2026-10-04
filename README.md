@@ -60,7 +60,7 @@ remain under development. Driver settings are currently read-only, and sensor
 values are snapshots taken during device inspection rather than live meters.
 
 The [GitHub Releases](https://github.com/compuvin/ChrissySDR/releases) page
-provides test APKs. The `0.5.2` APK is debug-signed for testing; it is not a
+provides test APKs. The `0.5.3` APK is debug-signed for testing; it is not a
 production-signed or Play Store build.
 
 ## Screenshots

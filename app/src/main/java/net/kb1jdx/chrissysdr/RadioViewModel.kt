@@ -14,7 +14,9 @@ import com.kb1jdx.chrissysdr.radio.RadioService
 import com.kb1jdx.chrissysdr.radio.RadioSensor
 import com.kb1jdx.chrissysdr.radio.RadioSetting
 import com.kb1jdx.chrissysdr.radio.SpectrumFrame
+import com.kb1jdx.chrissysdr.radio.SpectrumPolicy
 import com.kb1jdx.chrissysdr.radio.ReceiverConfig
+import com.kb1jdx.chrissysdr.radio.ReceiverDspSettings
 import com.kb1jdx.chrissysdr.radio.TransmitterConfig
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
@@ -105,6 +107,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     private val rxGeneration = AtomicLong()
     private val txErrorGeneration = AtomicLong()
     private var pendingRxRetune: ScheduledFuture<*>? = null
+    @Volatile private var activeRxFrequencyHz: Double? = null
+    @Volatile private var activeReceiverConfig: ReceiverConfig? = null
     private val mutableState = MutableStateFlow(RadioUiState())
     val state: StateFlow<RadioUiState> = mutableState.asStateFlow()
 
@@ -337,11 +341,17 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     fun setSpectrumRangeDb(value: Int) = mutableState.update {
         it.copy(spectrumRangeDb = value.coerceIn(20, 140))
     }
-    fun setSpectrumSpanHz(value: Double?) = mutableState.update {
-        val maximum = minOf(it.appliedSampleRateHz ?: it.sampleRateHz ?: 48_000.0, 48_000.0)
-        it.copy(spectrumSpanHz = value?.takeIf { span ->
-            span.isFinite() && span > 0.0 && span <= maximum
-        })
+    fun setSpectrumSpanHz(value: Double?) {
+        mutableState.update {
+            val maximum = SpectrumPolicy.displayRate(it.appliedSampleRateHz ?: it.sampleRateHz ?: 48_000.0)
+            it.copy(spectrumSpanHz = value?.takeIf { span ->
+                span.isFinite() && span > 0.0 && span <= maximum
+            })
+        }
+        val snapshot = mutableState.value
+        if (snapshot.rxActive) {
+            runCatching { radioService?.setReceiverSpectrumSpan(snapshot.spectrumSpanHz) }
+        }
     }
     fun setTuningStepHz(value: Double) {
         if (value !in TUNING_STEPS_HZ) return
@@ -421,7 +431,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         pendingRxRetune?.cancel(false)
         val snapshot = mutableState.value
         if (!snapshot.rxActive || !snapshot.rxAvailable) return
-        scheduleRxRetune()
+        scheduleFrequencyTune()
     }
     fun setMode(value: String) {
         val defaultBandwidth = ModeBandwidthDefaults.forMode(value) ?: return
@@ -437,10 +447,6 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         setBandwidth(defaultBandwidth.toString())
-        if (snapshot.rxActive) {
-            pendingRxRetune?.cancel(false)
-            startReceiver()
-        }
     }
 
     fun setNfmAudioCutoff(value: Double) {
@@ -450,7 +456,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             snapshot.nfmAudioCutoffHz == value
         ) return
         mutableState.update { it.copy(nfmAudioCutoffHz = value) }
-        if (snapshot.rxActive) startReceiver()
+        if (snapshot.rxActive) scheduleRxDspUpdate()
     }
 
     fun setNfmDeemphasis(value: Int) {
@@ -460,7 +466,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             snapshot.nfmDeemphasisUs == value
         ) return
         mutableState.update { it.copy(nfmDeemphasisUs = value) }
-        if (snapshot.rxActive) startReceiver()
+        if (snapshot.rxActive) scheduleRxDspUpdate()
     }
 
     fun setBandwidth(value: String) {
@@ -494,16 +500,110 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         val snapshot = mutableState.value
         if (snapshot.rxActive && !snapshot.rxBusy && snapshot.rxAvailable &&
             !snapshot.txActive && !snapshot.txBusy
-        ) scheduleRxRetune()
+        ) scheduleRxDspUpdate()
     }
 
-    private fun scheduleRxRetune() {
+    private fun scheduleRxDspUpdate() {
+        pendingRxRetune?.cancel(false)
+        val generation = rxGeneration.get()
         pendingRxRetune = retryScheduler.schedule(
             {
                 val current = mutableState.value
-                if (current.rxActive && !current.rxBusy && current.rxAvailable &&
-                    !current.txActive && !current.txBusy
-                ) startReceiver()
+                val passband = current.bandwidth.toDoubleOrNull()
+                if (generation != rxGeneration.get() || !current.rxActive || current.rxBusy ||
+                    !current.rxAvailable || current.txActive || current.txBusy || passband == null
+                ) return@schedule
+                val appliedRate = current.appliedSampleRateHz
+                if (appliedRate == null || !SampleRatePolicy.isUsable(appliedRate, current.mode, passband) ||
+                    (!current.sampleRateAutomatic && current.sampleRateHz != appliedRate)
+                ) {
+                    startReceiver()
+                    return@schedule
+                }
+                val capabilities = selectedRxCapabilities ?: return@schedule
+                val service = radioService ?: return@schedule
+                val hardwareBandwidth = BandwidthPolicy.forSpectrum(
+                    capabilities.bandwidths, capabilities.bandwidthRanges,
+                    ModeBandwidthDefaults.centeredRfWidth(current.mode, passband),
+                    SpectrumPolicy.displayRate(appliedRate),
+                )
+                val settings = ReceiverDspSettings(
+                    current.mode, passband, current.nfmAudioCutoffHz,
+                    current.nfmDeemphasisUs, hardwareBandwidth,
+                )
+                runCatching { service.reconfigureReceiver(settings) }
+                    .onSuccess { appliedBandwidth ->
+                        if (generation == rxGeneration.get()) {
+                            mutableState.update {
+                                it.copy(
+                                    sampleRateHz = appliedRate,
+                                    rxHardwareBandwidthHz = hardwareBandwidth,
+                                    rxAppliedHardwareBandwidthHz = appliedBandwidth,
+                                    rxStatus = "${settings.mode} audio active • applied ${formatHz(appliedRate)}",
+                                )
+                            }
+                            activeReceiverConfig = service.receiverConfiguration()
+                            if (mutableState.value.frequency.toDoubleOrNull() != activeRxFrequencyHz) {
+                                scheduleFrequencyTune()
+                            }
+                        }
+                    }
+                    .onFailure { error ->
+                        if (generation == rxGeneration.get()) {
+                            val previous = service.receiverConfiguration()
+                            mutableState.update {
+                                it.copy(
+                                    mode = previous?.mode ?: it.mode,
+                                    bandwidth = previous?.bandwidthHz?.toLong()?.toString() ?: it.bandwidth,
+                                    nfmAudioCutoffHz = previous?.nfmAudioCutoffHz ?: it.nfmAudioCutoffHz,
+                                    nfmDeemphasisUs = previous?.nfmDeemphasisUs ?: it.nfmDeemphasisUs,
+                                    sampleRateHz = previous?.sampleRate ?: it.sampleRateHz,
+                                    rxAvailable = previous != null,
+                                    txAvailable = previous?.mode == "AM" && selectedTxCapabilities != null &&
+                                        (!it.txRangesUnreported || it.allowUnknownTxRange),
+                                    rxStatus = "RX mode/filter change failed: ${error.message ?: error.javaClass.simpleName}",
+                                )
+                            }
+                        }
+                    }
+            },
+            RX_RETUNE_DELAY_MS,
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
+    private fun scheduleFrequencyTune() {
+        val generation = rxGeneration.get()
+        pendingRxRetune = retryScheduler.schedule(
+            {
+                val snapshot = mutableState.value
+                val frequency = snapshot.frequency.toDoubleOrNull()
+                if (generation != rxGeneration.get() || !snapshot.rxActive || snapshot.rxBusy ||
+                    !snapshot.rxAvailable || snapshot.txActive || snapshot.txBusy ||
+                    frequency == null || frequency == activeRxFrequencyHz
+                ) return@schedule
+                val service = radioService ?: return@schedule
+                runCatching { service.tuneReceiver(frequency) }
+                    .onSuccess {
+                        if (generation == rxGeneration.get()) {
+                            activeRxFrequencyHz = frequency
+                            activeReceiverConfig = service.receiverConfiguration()
+                            if (mutableState.value.frequency == snapshot.frequency) {
+                                mutableState.update { it.copy(rxStatus = "${it.mode} audio active • tuned ${formatHz(frequency)}") }
+                            }
+                        }
+                    }
+                    .onFailure { error ->
+                        if (generation == rxGeneration.get() && mutableState.value.frequency == snapshot.frequency) {
+                            val previous = activeRxFrequencyHz
+                            mutableState.update {
+                                it.copy(
+                                    frequency = previous?.toLong()?.toString() ?: it.frequency,
+                                    rxStatus = "RX tune failed: ${error.message ?: error.javaClass.simpleName}",
+                                )
+                            }
+                        }
+                    }
             },
             RX_RETUNE_DELAY_MS,
             TimeUnit.MILLISECONDS,
@@ -529,7 +629,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                             hardwareBandwidthAvailable(passband, it.mode)
                     } == true,
                 spectrumSpanHz = it.spectrumSpanHz?.takeIf { span ->
-                    span <= minOf(value ?: it.automaticSampleRateHz ?: 48_000.0, 48_000.0)
+                    span <= SpectrumPolicy.displayRate(value ?: it.automaticSampleRateHz ?: 48_000.0)
                 },
                 appliedSampleRateHz = null,
             )
@@ -740,7 +840,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 sampleRateAutomatic = true,
                 appliedSampleRateHz = null,
                 spectrumSpanHz = it.spectrumSpanHz?.takeIf { span ->
-                    rxRate != null && span <= minOf(rxRate, 48_000.0)
+                    rxRate != null && span <= SpectrumPolicy.displayRate(rxRate)
                 },
                 rxGainRanges = rxCapabilities?.gainRanges.orEmpty(),
                 rxGainValues = rxCapabilities?.currentGains.orEmpty(),
@@ -803,7 +903,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 automaticSampleRateHz = choice.automaticRate,
                 sampleRateOptions = choice.overrideOptions,
                 spectrumSpanHz = it.spectrumSpanHz?.takeIf { span ->
-                    choice.automaticRate != null && span <= minOf(choice.automaticRate, 48_000.0)
+                    choice.automaticRate != null && span <= SpectrumPolicy.displayRate(choice.automaticRate)
                 },
                 rxAvailable = selectedRxFormat != null && choice.automaticRate != null &&
                     validRxFrequency(it.frequency) &&
@@ -833,6 +933,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startReceiver() {
+        pendingRxRetune?.cancel(false)
         val snapshot = mutableState.value
         val device = selectedDevice
         val format = selectedRxFormat
@@ -863,9 +964,10 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val capabilities = selectedRxCapabilities ?: return
-        val hardwareBandwidth = BandwidthPolicy.choose(
+        val hardwareBandwidth = BandwidthPolicy.forSpectrum(
             capabilities.bandwidths, capabilities.bandwidthRanges,
             ModeBandwidthDefaults.centeredRfWidth(snapshot.mode, bandwidth),
+            SpectrumPolicy.displayRate(sampleRate),
         )
         val config = ReceiverConfig(
             endpoint = RadioEndpoint(snapshot.host, selectedPort),
@@ -882,7 +984,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             rxGains = rxGainOverrides,
             rxAntenna = rxAntennaOverride,
             rxHardwareAgc = rxHardwareAgcOverride,
+            spectrumSpanHz = snapshot.spectrumSpanHz,
         )
+        activeReceiverConfig = config
         val generation = rxGeneration.incrementAndGet()
         mutableState.update {
             it.copy(
@@ -931,7 +1035,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                             mutableState.update {
                                 it.copy(
                                     rxStatus = buildString {
-                                        append("Playing ${config.mode} • %.1f ksps".format(stats.samplesPerSecond / 1_000))
+                                        append("Playing ${it.mode} • %.1f ksps".format(stats.samplesPerSecond / 1_000))
                                         append(" • RMS %.1f dBFS".format(stats.rmsDbfs))
                                         append(" • gaps ${stats.sequenceGaps}")
                                     },
@@ -960,13 +1064,14 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     },
                     onError = { error ->
                         if (failed.compareAndSet(false, true) && generation == rxGeneration.get()) {
-                            handleRxFailure(config, generation, retryCount, error, true)
+                            handleRxFailure(activeReceiverConfig ?: config, generation, retryCount, error, true)
                         }
                     },
                     isCancelled = { generation != rxGeneration.get() },
                 )
             }.onSuccess { applied ->
                 if (!failed.get() && generation == rxGeneration.get()) {
+                    activeRxFrequencyHz = config.frequencyHz
                     mutableState.update {
                         it.copy(
                             rxActive = true,
@@ -977,7 +1082,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                             appliedSampleRateHz = applied.sampleRate,
                             rxAppliedHardwareBandwidthHz = applied.hardwareBandwidth,
                             spectrumSpanHz = it.spectrumSpanHz?.takeIf { span ->
-                                span <= minOf(applied.sampleRate, 48_000.0)
+                                span <= SpectrumPolicy.displayRate(applied.sampleRate)
                             },
                             rxGainValues = it.rxGainValues + config.rxGains,
                             rxHardwareAgc = config.rxHardwareAgc ?: it.rxHardwareAgc,
@@ -1049,6 +1154,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stopReceiver() {
         pendingRxRetune?.cancel(false)
+        activeRxFrequencyHz = null
+        activeReceiverConfig = null
         val generation = rxGeneration.incrementAndGet()
         radioService?.cancelPendingReceiver()
         mutableState.update { it.copy(rxBusy = true, rxStatus = "Stopping RX…") }

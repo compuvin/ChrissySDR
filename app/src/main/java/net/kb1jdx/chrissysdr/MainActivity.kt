@@ -89,6 +89,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kb1jdx.chrissysdr.radio.RadioService
 import com.kb1jdx.chrissysdr.radio.RadioConnectionState
+import com.kb1jdx.chrissysdr.radio.SpectrumPolicy
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     private val radio: RadioViewModel by viewModels()
@@ -493,12 +495,21 @@ private fun SpectrumDisplay(
 ) {
     val frame = state.spectrum
     val spanHz = frame?.let { (state.spectrumSpanHz ?: it.sampleRateHz).coerceAtMost(it.sampleRateHz) }
-    val centerFrequency = frame?.centerFrequencyHz ?: state.frequency.toDoubleOrNull()
+    val centerFrequency = state.frequency.toDoubleOrNull() ?: frame?.centerFrequencyHz
     var dragPreviewHz by remember { mutableStateOf<Double?>(null) }
     var dragOffsetPx by remember { mutableStateOf(0f) }
+    var dragCommitPending by remember { mutableStateOf(false) }
     val latestState by rememberUpdatedState(state)
     val latestTune by rememberUpdatedState(onTuneFrequency)
     val latestSpanChange by rememberUpdatedState(onSpanChanged)
+    LaunchedEffect(dragCommitPending, dragPreviewHz, state.frequency) {
+        if (dragCommitPending && dragPreviewHz != null) {
+            if (state.frequency.toDoubleOrNull() != dragPreviewHz) delay(1_200)
+            dragCommitPending = false
+            dragPreviewHz = null
+            dragOffsetPx = 0f
+        }
+    }
     Card(
         modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = SpectrumBackground),
@@ -514,7 +525,8 @@ private fun SpectrumDisplay(
                             if (initialFrame == null || latestState.rxBusy) return@awaitEachGesture
                             val initialSpan = (latestState.spectrumSpanHz ?: initialFrame.sampleRateHz)
                                 .coerceAtMost(initialFrame.sampleRateHz)
-                            val center = initialFrame.centerFrequencyHz
+                            val center = latestState.frequency.toDoubleOrNull()
+                                ?: initialFrame.centerFrequencyHz
                             val step = latestState.tuningStepHz
                             val touchSlop = viewConfiguration.touchSlop
                             var dragging = false
@@ -527,13 +539,14 @@ private fun SpectrumDisplay(
                                 if (pressed.size >= 2) {
                                     if (!pinching) {
                                         pinching = true
+                                        dragCommitPending = false
                                         pinchSpan = latestState.spectrumSpanHz ?: initialFrame.sampleRateHz
                                         dragPreviewHz = null
                                         dragOffsetPx = 0f
                                     }
                                     val distance = (pressed[0].position - pressed[1].position).getDistance()
                                     if (pinchDistance == 0f) pinchDistance = distance
-                                    val maximum = minOf(initialFrame.sampleRateHz, 48_000.0)
+                                    val maximum = SpectrumPolicy.displayRate(initialFrame.sampleRateHz)
                                     val zoomed = SpectrumTuning.zoomSpan(
                                         pinchSpan, distance.toDouble() / pinchDistance, maximum,
                                     )
@@ -541,14 +554,18 @@ private fun SpectrumDisplay(
                                     pressed.forEach { it.consume() }
                                 } else if (pressed.isEmpty()) {
                                     if (!pinching) {
-                                        if (dragging) dragPreviewHz?.let(latestTune)
-                                        else SpectrumTuning.tap(
+                                        if (dragging && dragPreviewHz != null) {
+                                            dragCommitPending = true
+                                            dragPreviewHz?.let(latestTune)
+                                        } else SpectrumTuning.tap(
                                             center, initialSpan, down.position.x,
                                             size.width.toFloat(), step,
                                         )?.let(latestTune)
                                     }
-                                    dragPreviewHz = null
-                                    dragOffsetPx = 0f
+                                    if (!dragCommitPending) {
+                                        dragPreviewHz = null
+                                        dragOffsetPx = 0f
+                                    }
                                     break
                                 } else if (!pinching) {
                                     val position = pressed[0].position
@@ -604,17 +621,21 @@ private fun SpectrumDisplay(
                     val path = Path()
                     val points = size.width.toInt().coerceIn(2, bins.size)
                     var pathStarted = false
-                    val visibleShift = dragOffsetPx / size.width
+                    val dragAlreadyApplied = dragCommitPending &&
+                        centerFrequency == dragPreviewHz
+                    val visibleShift = if (dragAlreadyApplied) 0f else dragOffsetPx / size.width
                     for (point in 0 until points) {
                         val fraction = point.toDouble() / (points - 1)
-                        val frequencyOffset = (fraction - 0.5 - visibleShift) * spanHz
+                        val frequencyOffset = (fraction - 0.5 - visibleShift) * spanHz +
+                            ((centerFrequency ?: frame.centerFrequencyHz) - frame.centerFrequencyHz)
                         if (frequencyOffset !in -frame.sampleRateHz / 2..frame.sampleRateHz / 2) {
                             pathStarted = false
                             continue
                         }
                         val bin = ((frequencyOffset / frame.sampleRateHz + 0.5) * bins.size)
                             .toInt().coerceIn(0, bins.lastIndex)
-                        val nextOffset = ((point + 1.0) / (points - 1) - 0.5 - visibleShift) * spanHz
+                        val nextOffset = ((point + 1.0) / (points - 1) - 0.5 - visibleShift) * spanHz +
+                            ((centerFrequency ?: frame.centerFrequencyHz) - frame.centerFrequencyHz)
                         val nextBin = ((nextOffset / frame.sampleRateHz + 0.5) * bins.size)
                             .toInt().coerceIn(bin, bins.lastIndex)
                         var peak = bins[bin]
@@ -951,9 +972,8 @@ private fun TuningStepSelector(stepHz: Double, onSelected: (Double) -> Unit) {
 @Composable
 private fun SpectrumSpanSelector(state: RadioUiState, onSelected: (Double?) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val availableRate = minOf(state.appliedSampleRateHz ?: state.sampleRateHz ?: 48_000.0, 48_000.0)
-    val spans = listOf(null, 3_000.0, 6_000.0, 12_000.0, 24_000.0, 48_000.0)
-        .filter { it == null || it <= availableRate }
+    val availableRate = state.appliedSampleRateHz ?: state.sampleRateHz ?: 48_000.0
+    val spans = SpectrumPolicy.presetSpans(availableRate)
     Box {
         OutlinedButton(onClick = { expanded = true }) {
             Text("Spectrum span: ${state.spectrumSpanHz?.let(::formatHz) ?: "auto"}")

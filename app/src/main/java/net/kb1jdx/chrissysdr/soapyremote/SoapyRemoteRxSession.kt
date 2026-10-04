@@ -8,6 +8,9 @@ import com.kb1jdx.chrissysdr.dsp.SpectrumAnalyzer
 import com.kb1jdx.chrissysdr.dsp.ComplexPolyphaseResampler
 import com.kb1jdx.chrissysdr.radio.SoapyStreamException
 import com.kb1jdx.chrissysdr.radio.RadioOpenCancellation
+import com.kb1jdx.chrissysdr.radio.ReceiverDspSettings
+import com.kb1jdx.chrissysdr.radio.SpectrumPolicy
+import com.kb1jdx.chrissysdr.radio.SpectrumResolutionPolicy
 import java.io.DataInputStream
 import java.io.OutputStream
 import java.nio.ByteBuffer
@@ -33,14 +36,13 @@ class SoapyRemoteRxSession private constructor(
     private val status: Socket,
     private val streamId: Int,
     val inputSampleRate: Double,
-    val appliedHardwareBandwidthHz: Double?,
+    initialAppliedHardwareBandwidthHz: Double?,
     val spectrumSampleRate: Double,
     private val streamFormat: String,
     private val fullScale: Double,
-    private val passbandHz: Double,
-    private val mode: String,
-    private val nfmAudioCutoffHz: Double,
-    private val nfmDeemphasisUs: Int,
+    initialFrequencyHz: Double,
+    initialDspSettings: ReceiverDspSettings,
+    initialSpectrumSpanHz: Double?,
 ) : AutoCloseable {
     private val sampleCodec = IqSampleCodec(streamFormat, fullScale)
     private val running = AtomicBoolean(false)
@@ -48,6 +50,57 @@ class SoapyRemoteRxSession private constructor(
     private var readerThread: Thread? = null
     @Volatile private var audioOutput: AndroidAudioOutput? = null
     @Volatile private var audioVolume = 1f
+    @Volatile var hardwareCenterHz = initialFrequencyHz
+        private set
+    @Volatile var appliedHardwareBandwidthHz = initialAppliedHardwareBandwidthHz
+        private set
+    @Volatile private var spectrumSpanHz = initialSpectrumSpanHz
+    @Volatile private var dspSettings = initialDspSettings
+    private var requestedHardwareBandwidthHz = initialDspSettings.hardwareBandwidthHz
+
+    fun tune(frequencyHz: Double): Double {
+        require(frequencyHz.isFinite() && frequencyHz > 0.0) { "Invalid RX frequency" }
+        check(!closed.get()) { "RX stream is closed" }
+        if (frequencyHz != hardwareCenterHz) {
+            transact(
+                SoapyRpcWriter().call(SET_FREQUENCY).char(RX).int32(0)
+                    .float64(frequencyHz).kwargs(emptyMap()),
+            ) { it.requireVoid() }
+            hardwareCenterHz = frequencyHz
+        }
+        return hardwareCenterHz
+    }
+
+    fun setSpectrumSpan(spanHz: Double?) {
+        require(spanHz == null || (spanHz.isFinite() && spanHz > 0.0 &&
+            spanHz <= spectrumSampleRate)) { "Invalid spectrum span" }
+        spectrumSpanHz = spanHz
+    }
+
+    fun reconfigure(settings: ReceiverDspSettings): Double? {
+        require(settings.mode in listOf("AM", "USB", "LSB", "NFM")) { "Unsupported RX mode" }
+        require(settings.passbandHz.isFinite() && settings.passbandHz > 0.0)
+        require(settings.nfmAudioCutoffHz in listOf(2_500.0, 3_000.0, 4_000.0))
+        require(settings.nfmDeemphasisUs in listOf(0, 50, 75))
+        val centeredWidth = if (settings.mode == "USB" || settings.mode == "LSB")
+            settings.passbandHz * 2.0 else settings.passbandHz
+        require(inputSampleRate >= centeredWidth * 1.25) {
+            "Current radio sample rate cannot support this passband"
+        }
+        check(!closed.get()) { "RX stream is closed" }
+        if (settings.hardwareBandwidthHz != null &&
+            settings.hardwareBandwidthHz != requestedHardwareBandwidthHz
+        ) {
+            transact(SoapyRpcWriter().call(SET_BANDWIDTH).char(RX).int32(0)
+                .float64(settings.hardwareBandwidthHz)) { it.requireVoid() }
+            requestedHardwareBandwidthHz = settings.hardwareBandwidthHz
+            appliedHardwareBandwidthHz = runCatching {
+                transact(SoapyRpcWriter().call(GET_BANDWIDTH).char(RX).int32(0)) { it.float64() }
+            }.getOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+        }
+        dspSettings = settings
+        return appliedHardwareBandwidthHz
+    }
 
     fun setAudioVolume(volume: Float) {
         audioVolume = volume.coerceIn(0f, 1f)
@@ -99,7 +152,9 @@ class SoapyRemoteRxSession private constructor(
         var intervalStart = System.nanoTime()
         var lastPacketAt = intervalStart
         val bytesPerElement = sampleCodec.bytesPerElement
-        val spectrumAnalyzer = SpectrumAnalyzer()
+        var spectrumAnalyzer = SpectrumAnalyzer(
+            SpectrumResolutionPolicy.fftSize(spectrumSampleRate, spectrumSpanHz),
+        )
         val spectrumResampler = if (inputSampleRate > spectrumSampleRate)
             ComplexPolyphaseResampler(
                 inputSampleRate, spectrumSampleRate, spectrumSampleRate * 0.85,
@@ -108,14 +163,18 @@ class SoapyRemoteRxSession private constructor(
         try {
             val input = DataInputStream(stream.getInputStream())
             val output = stream.getOutputStream()
-            val amPipeline = if (mode == "AM")
-                AmReceivePipeline(inputSampleRate, audioSampleRate, passbandHz) else null
-            val ssbPipeline = if (mode == "USB" || mode == "LSB")
-                SsbReceivePipeline(inputSampleRate, audioSampleRate, passbandHz, mode == "USB") else null
-            val nfmPipeline = if (mode == "NFM") NfmReceivePipeline(
-                inputSampleRate, audioSampleRate, passbandHz,
-                nfmAudioCutoffHz, nfmDeemphasisUs,
-            ) else null
+            fun audioPipeline(settings: ReceiverDspSettings): (FloatArray, Int) -> ShortArray =
+                when (settings.mode) {
+                    "AM" -> AmReceivePipeline(inputSampleRate, audioSampleRate, settings.passbandHz)::process
+                    "USB", "LSB" -> SsbReceivePipeline(inputSampleRate, audioSampleRate,
+                        settings.passbandHz, settings.mode == "USB")::process
+                    "NFM" -> NfmReceivePipeline(inputSampleRate, audioSampleRate,
+                        settings.passbandHz, settings.nfmAudioCutoffHz,
+                        settings.nfmDeemphasisUs)::process
+                    else -> error("Unsupported RX mode ${settings.mode}")
+                }
+            var pipelineSettings = dspSettings
+            var pipeline = audioPipeline(pipelineSettings)
             while (running.get()) {
                 try {
                     val bytes = input.readInt()
@@ -145,12 +204,21 @@ class SoapyRemoteRxSession private constructor(
                         sumSquares += power
                         peak = maxOf(peak, magnitude)
                     }
-                    val audio = amPipeline?.process(iq, elements)
-                        ?: ssbPipeline?.process(iq, elements)
-                        ?: checkNotNull(nfmPipeline).process(iq, elements)
+                    val updatedSettings = dspSettings
+                    if (updatedSettings !== pipelineSettings) {
+                        pipelineSettings = updatedSettings
+                        pipeline = audioPipeline(updatedSettings)
+                    }
+                    val audio = pipeline(iq, elements)
                     audioOutput?.write(audio, audio.size)
                         ?: error("Android audio output is closed")
                     val spectrumIq = spectrumResampler?.process(iq, elements) ?: iq
+                    val fftSize = SpectrumResolutionPolicy.fftSize(
+                        spectrumSampleRate, spectrumSpanHz,
+                    )
+                    if (spectrumAnalyzer.fftSize != fftSize) {
+                        spectrumAnalyzer = SpectrumAnalyzer(fftSize)
+                    }
                     spectrumAnalyzer.accept(
                         spectrumIq, spectrumIq.size / 2, System.nanoTime(),
                     )?.let(onSpectrum)
@@ -250,7 +318,6 @@ class SoapyRemoteRxSession private constructor(
         private const val FLOW_WINDOW_PACKETS = SOCKET_WINDOW / MTU
         private const val ACK_INTERVAL_PACKETS = FLOW_WINDOW_PACKETS / 8
         private const val ANDROID_AUDIO_SAMPLE_RATE = 48_000
-        private const val MAX_SPECTRUM_RATE = 48_000.0
         private const val MIN_RADIO_SAMPLE_RATE = 8_000
         private const val STREAM_STALL_NS = 10_000_000_000L
         private const val SET_SAMPLE_RATE = 900
@@ -272,6 +339,7 @@ class SoapyRemoteRxSession private constructor(
             rxGains: Map<String, Double>,
             rxAntenna: String?,
             rxHardwareAgc: Boolean?,
+            spectrumSpanHz: Double?,
             cancellation: RadioOpenCancellation,
         ): SoapyRemoteRxSession {
             require(sampleRate >= MIN_RADIO_SAMPLE_RATE) { "Sample rate must be at least 8000 Hz" }
@@ -382,8 +450,10 @@ class SoapyRemoteRxSession private constructor(
                 return SoapyRemoteRxSession(
                     control, stream!!, status!!, streamId, appliedSampleRate,
                     appliedHardwareBandwidth,
-                    minOf(appliedSampleRate, MAX_SPECTRUM_RATE), format, fullScale,
-                    bandwidthHz, mode, nfmAudioCutoffHz, nfmDeemphasisUs,
+                    SpectrumPolicy.displayRate(appliedSampleRate), format, fullScale,
+                    frequencyHz, ReceiverDspSettings(mode, bandwidthHz,
+                        nfmAudioCutoffHz, nfmDeemphasisUs, hardwareBandwidthHz),
+                    spectrumSpanHz,
                 )
             } catch (error: Throwable) {
                 runCatching { stream?.close() }
