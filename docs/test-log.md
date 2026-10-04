@@ -17,15 +17,17 @@ individual experiments belong here instead.
 - **App version:** `0.5.3` debug-signed APK, version code 37.
 - **Scope:** Bug-fix release only; no new features announced. Includes the
   accepted `0.5.3-dev.4` corrections documented below.
-- **Device result:** Operator reported all `0.5.3` bug-fix tests successful.
+- **Device result:** Operator reported the tuning and spectrum bug-fix tests
+  successful, then clarified that notification return remains broken.
 - **Automated result:** Debug APK assembly and unit tests passed.
 
 ## 2026-10-03 — 0.5.3 bug-fix acceptance
 
 - **App version:** `0.5.3-dev.4` local debug APK.
-- **Device result:** Operator reports that all `0.5.3` bug-fix tests completed
-  successfully. This covers notification return, stream-preserving tuning,
-  spectrum span/zoom and drag behavior, and mode changes. Individual device
+- **Device result:** Operator initially reported the `0.5.3` bug-fix tests
+  successful, but later clarified that notification return was not fixed.
+  Stream-preserving tuning, spectrum span/zoom and drag behavior, and mode
+  changes passed. Individual device
   steps and the exact 1.4 MHz recovery sequence were not separately detailed.
 - **Release status:** Accepted for the `0.5.3` bug-fix release.
 
@@ -94,11 +96,11 @@ individual experiments belong here instead.
 
 ## 2026-10-03 — Notification return to active RX
 
-- **Scope:** Notification content tap now brings the existing activity forward
-  instead of creating a second activity with a fresh, stopped-RX UI state.
-- **Device result:** Included in the operator's successful `0.5.3` bug-fix
-  report; exact notification-return steps were not itemized.
-- **Release status:** Included in the local `0.5.3-dev.2` APK; not published.
+- **Scope:** Attempted to bring the existing activity forward when the
+  notification is tapped.
+- **Device result:** Operator clarified after release that the issue remains:
+  the opened screen can show RX as stopped while audio continues.
+- **Release status:** Known issue in `0.5.3`; no further fix attempted yet.
 
 ## 2026-10-02 — 0.5.2 test release
 
