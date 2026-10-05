@@ -26,6 +26,21 @@ import com.kb1jdx.chrissysdr.MainActivity
 import com.kb1jdx.chrissysdr.R
 
 class RadioService : Service() {
+    data class ActiveReceiverSnapshot(
+        val config: ReceiverConfig,
+        val appliedSampleRate: Double,
+        val appliedHardwareBandwidth: Double?,
+        val deviceInfo: RadioDeviceCapabilities?,
+        val statistics: ReceiverStatistics?,
+        val spectrum: SpectrumFrame?,
+    )
+
+    private data class InspectedDevice(
+        val endpoint: RadioEndpoint,
+        val arguments: Map<String, String>,
+        val capabilities: RadioDeviceCapabilities,
+    )
+
     inner class LocalBinder : Binder() {
         val service: RadioService get() = this@RadioService
     }
@@ -37,6 +52,12 @@ class RadioService : Service() {
     private var transmitter: RadioTransmitter? = null
     private var receiverConfig: ReceiverConfig? = null
     private var transmitterConfig: TransmitterConfig? = null
+    private var inspectedDevice: InspectedDevice? = null
+    private var lastReceiverStatistics: ReceiverStatistics? = null
+    private var lastSpectrum: SpectrumFrame? = null
+    @Volatile private var receiverStatisticsListener: ((ReceiverStatistics) -> Unit)? = null
+    @Volatile private var receiverSpectrumListener: ((SpectrumFrame) -> Unit)? = null
+    @Volatile private var receiverErrorListener: ((Throwable) -> Unit)? = null
     private lateinit var mediaSession: MediaSession
     private lateinit var audioManager: AudioManager
     private lateinit var rxFocusRequest: AudioFocusRequest
@@ -107,7 +128,31 @@ class RadioService : Service() {
     fun inspect(
         endpoint: RadioEndpoint,
         deviceArguments: Map<String, String>,
-    ): RadioDeviceCapabilities = backend.inspect(endpoint, deviceArguments)
+    ): RadioDeviceCapabilities = backend.inspect(endpoint, deviceArguments).also {
+        synchronized(lock) { inspectedDevice = InspectedDevice(endpoint, deviceArguments, it) }
+    }
+
+    fun activeReceiverSnapshot(): ActiveReceiverSnapshot? = synchronized(lock) {
+        val config = receiverConfig ?: return@synchronized null
+        val session = receiver ?: return@synchronized null
+        ActiveReceiverSnapshot(
+            config, session.appliedSampleRate, session.appliedHardwareBandwidth,
+            inspectedDevice?.takeIf {
+                it.endpoint == config.endpoint && it.arguments == config.deviceArguments
+            }?.capabilities,
+            lastReceiverStatistics, lastSpectrum,
+        )
+    }
+
+    fun setReceiverCallbacks(
+        onStatistics: ((ReceiverStatistics) -> Unit)?,
+        onSpectrum: ((SpectrumFrame) -> Unit)?,
+        onError: ((Throwable) -> Unit)?,
+    ) {
+        receiverStatisticsListener = onStatistics
+        receiverSpectrumListener = onSpectrum
+        receiverErrorListener = onError
+    }
 
     fun setStateListener(listener: ((receiving: Boolean, transmitting: Boolean) -> Unit)?) {
         stateListener = listener
@@ -135,6 +180,9 @@ class RadioService : Service() {
         runCatching { receiver?.close() }
         receiver = null
         receiverConfig = null
+        lastReceiverStatistics = null
+        lastSpectrum = null
+        setReceiverCallbacks(onStatistics, onSpectrum, onError)
         val cancellation = RadioOpenCancellation()
         pendingRxOpen = cancellation
         try {
@@ -149,8 +197,14 @@ class RadioService : Service() {
                 rxUserPaused = false
                 session.setAudioVolume(rxAudioVolume)
                 session.start(
-                    onStatistics = onStatistics,
-                    onSpectrum = onSpectrum,
+                    onStatistics = { stats ->
+                        synchronized(lock) { lastReceiverStatistics = stats }
+                        receiverStatisticsListener?.invoke(stats)
+                    },
+                    onSpectrum = { frame ->
+                        synchronized(lock) { lastSpectrum = frame }
+                        receiverSpectrumListener?.invoke(frame)
+                    },
                     onError = { error ->
                         val current = synchronized(lock) {
                             if (receiver === session) {
@@ -164,7 +218,7 @@ class RadioService : Service() {
                             abandonRxAudioFocusIfIdle()
                             notifyState()
                             updateForegroundState()
-                            onError(error)
+                            receiverErrorListener?.invoke(error)
                         }
                     },
                 )
@@ -237,6 +291,8 @@ class RadioService : Service() {
             val current = receiver
             receiver = null
             receiverConfig = null
+            lastReceiverStatistics = null
+            lastSpectrum = null
             rxUserPaused = false
             current
         }
@@ -255,6 +311,8 @@ class RadioService : Service() {
         runCatching { receiver?.close() }
         receiver = null
         receiverConfig = null
+        lastReceiverStatistics = null
+        lastSpectrum = null
         abandonRxAudioFocusIfIdle()
         runCatching { transmitter?.close() }
         transmitter = null
@@ -269,6 +327,7 @@ class RadioService : Service() {
         transmitter = session
         try {
             session.start(
+                maximumSeconds = config.timeoutSeconds,
                 onStatistics = onStatistics,
                 onStopped = onStopped,
                 onError = { error ->

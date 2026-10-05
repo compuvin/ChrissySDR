@@ -103,6 +103,8 @@ data class TransmitterConfig(
     val sampleRate: Double,
     val format: String,
     val fullScale: Double,
+    val mode: String = "AM",
+    val timeoutSeconds: Int = 180,
 )
 
 data class ReceiverStatistics(
@@ -145,6 +147,7 @@ interface RadioReceiver : AutoCloseable {
 interface RadioTransmitter : AutoCloseable {
     val appliedSampleRate: Double
     fun start(
+        maximumSeconds: Int,
         onStatistics: (TransmitterStatistics) -> Unit,
         onStopped: () -> Unit,
         onError: (Throwable) -> Unit,

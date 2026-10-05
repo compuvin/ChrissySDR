@@ -1,7 +1,7 @@
 package com.kb1jdx.chrissysdr.soapyremote
 
 import com.kb1jdx.chrissysdr.audio.AndroidMicrophoneInput
-import com.kb1jdx.chrissysdr.dsp.AmTransmitPipeline
+import com.kb1jdx.chrissysdr.dsp.VoiceTransmitPipeline
 import com.kb1jdx.chrissysdr.radio.SoapyStreamException
 import java.io.DataInputStream
 import java.nio.ByteBuffer
@@ -26,6 +26,7 @@ class SoapyRemoteTxSession private constructor(
     val outputSampleRate: Double,
     private val streamFormat: String,
     private val fullScale: Double,
+    private val mode: String,
 ) : AutoCloseable {
     private val sampleCodec = IqSampleCodec(streamFormat, fullScale)
     private val running = AtomicBoolean(false)
@@ -34,12 +35,12 @@ class SoapyRemoteTxSession private constructor(
     @Volatile private var microphoneInput: AndroidMicrophoneInput? = null
 
     fun start(
-        maximumSeconds: Int = TEST_TX_LIMIT_SECONDS,
+        maximumSeconds: Int,
         onStatistics: (TxStatistics) -> Unit,
         onStopped: () -> Unit,
         onError: (Throwable) -> Unit,
     ) {
-        require(maximumSeconds in 1..TEST_TX_LIMIT_SECONDS) { "Invalid TX time limit" }
+        require(maximumSeconds in 30..600) { "Invalid TX time limit" }
         check(!closed.get()) { "TX stream is closed" }
         check(running.compareAndSet(false, true)) { "TX stream is already running" }
         try {
@@ -82,7 +83,7 @@ class SoapyRemoteTxSession private constructor(
             val input = DataInputStream(stream.getInputStream())
             val output = stream.getOutputStream()
             val microphone = microphoneInput ?: return
-            val audioPipeline = AmTransmitPipeline(MICROPHONE_SAMPLE_RATE, outputSampleRate)
+            val audioPipeline = VoiceTransmitPipeline(mode, MICROPHONE_SAMPLE_RATE, outputSampleRate)
             val initialAck = readHeader(input)
             acknowledgedSequence = initialAck.sequence
             flowWindow = initialAck.elements
@@ -139,7 +140,7 @@ class SoapyRemoteTxSession private constructor(
 
                 val now = System.nanoTime()
                 val interval = (now - intervalStart) / 1_000_000_000.0
-                if (interval >= 1.0) {
+                if (interval >= 0.2) {
                     onStatistics(
                         TxStatistics(
                             totalSamples = totalSamples,
@@ -206,7 +207,6 @@ class SoapyRemoteTxSession private constructor(
     }
 
     companion object {
-        const val TEST_TX_LIMIT_SECONDS = 30
         private const val TX = 0
         private const val MAKE = 1
         private const val UNMAKE = 2
@@ -233,6 +233,7 @@ class SoapyRemoteTxSession private constructor(
             sampleRate: Double,
             format: String,
             fullScale: Double,
+            mode: String,
         ): SoapyRemoteTxSession {
             require(sampleRate >= 8_000) { "TX sample rate must be at least 8000 Hz" }
             IqSampleCodec(format, fullScale)
@@ -299,7 +300,7 @@ class SoapyRemoteTxSession private constructor(
                 setupReply.string()
                 setupReply.requireFinished()
                 return SoapyRemoteTxSession(
-                    control, stream!!, status!!, streamId, appliedSampleRate, format, fullScale,
+                    control, stream!!, status!!, streamId, appliedSampleRate, format, fullScale, mode,
                 )
             } catch (error: Throwable) {
                 runCatching { stream?.close() }

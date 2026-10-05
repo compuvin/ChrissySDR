@@ -86,13 +86,13 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 - [ ] Configure TX format, sample rate, frequency, bandwidth, antenna, and gain exclusively from advertised TX capabilities.
 - [x] Validate the requested frequency against the device’s TX ranges before arming.
 - [ ] Use tap-to-latch PTT with:
-  - [ ] A separate explicit TX-armed state.
-  - [ ] Strong visual and audible transitions into and out of transmit.
+  - [x] A separate explicit TX-armed state.
+  - [x] Strong visual and audible transitions into and out of transmit.
   - [ ] A default three-minute timeout configurable to 30 seconds, 1, 3, 5, or 10 minutes.
   - [ ] Immediate unkey on timeout, disconnect, stream failure, service shutdown, audio-recording failure, or application fault.
-  - [ ] No automatic return to transmit after reconnect or restart.
-- [ ] Request microphone permission only when TX is first configured.
-- [ ] Disable TX when the radio is receive-only, the device is not the station owner, capabilities are incomplete, or validation fails.
+  - [x] No automatic return to transmit after reconnect or restart.
+- [x] Request microphone permission when a radio becomes TX-ready, before the first transmit attempt.
+- [x] Disable TX when the radio is receive-only, the device is not the station owner, capabilities are incomplete, or validation fails.
 - [x] Test TX initially into a dummy load or controlled test endpoint, not over the air.
 
 ### Later Enhancements

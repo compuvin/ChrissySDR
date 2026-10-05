@@ -22,10 +22,13 @@ class TxControlPolicyTest {
         assertNull(TxControlPolicy.unavailableReason("AM", true, "ready", "7200000", emptyList()))
     }
 
-    @Test fun rejectsInvalidFrequencyAndOtherModes() {
+    @Test fun acceptsVoiceModesAndRejectsInvalidFrequency() {
         assertEquals("TX unavailable: enter a valid frequency", TxControlPolicy.unavailableReason(
             "AM", true, "ready", "NaN", ranges))
-        assertEquals("TX unavailable: only AM transmit is implemented", TxControlPolicy.unavailableReason(
-            "LSB", true, "ready", "7200000", ranges))
+        listOf("AM", "NFM", "USB", "LSB").forEach { mode ->
+            assertNull(TxControlPolicy.unavailableReason(mode, true, "ready", "7200000", ranges))
+        }
+        assertEquals("TX unavailable: this mode cannot transmit", TxControlPolicy.unavailableReason(
+            "CW", true, "ready", "7200000", ranges))
     }
 }

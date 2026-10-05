@@ -12,6 +12,44 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-04 — Settings section divider observation
+
+- **App version:** `0.5.4-dev.1` local debug APK, version code 38.
+- **Observation:** Settings has no horizontal divider between the Spectrum and
+  Transmit Timeout sections.
+- **Status:** Not fixed; visual cleanup deferred at the operator's request.
+
+## 2026-10-04 — Active-radio notification return (second attempt)
+
+- **App version:** `0.5.4-dev.1` local debug APK, version code 38; not published.
+- **Cause:** The foreground service retained the RX stream, but a newly created
+  activity/view model did not recover the running receiver configuration or
+  stream callbacks. It could therefore show RX as stopped while audio played.
+- **Change:** Reattach a new screen to the service's active receiver snapshot,
+  current statistics, and spectrum callbacks. The launcher activity now uses a
+  single task so a notification tap reuses it when it still exists.
+- **Automated result:** Debug build and unit tests passed.
+- **Device result:** Tapping the notification now returns to the app correctly
+  while RX audio continues. However, the spectrum becomes choppier and appears
+  noisier after returning. Changing the averaging setting does not help;
+  stopping and restarting RX restores the normal spectrum.
+- **Status:** Notification return is confirmed; the post-return spectrum
+  regression remains open. No fix attempted at the operator's request.
+
+## 2026-10-04 — Voice TX modes and tap-to-latch handoff
+
+- **App version:** `0.5.4-dev.1` local debug APK, version code 38; not published.
+- **Scope:** AM, NFM, USB, and LSB now use mode-specific microphone-to-IQ
+  pipelines. The extra pre-TX confirmation dialog was removed. The 30-second
+  test cap was replaced by an automatic three-minute timeout, configurable in
+  Settings to 30 seconds, 1, 3, 5, or 10 minutes.
+- **Automated result:** Debug APK assembly and unit tests passed, including
+  sideband selection, NFM constant-envelope output, AM modulation, and rate
+  conversion checks.
+- **Device result:** Pending controlled on-device TX tests for each mode,
+  timeout, and RX restoration. The 0.7 mode-streaming checklist remains open
+  until those checks are complete.
+
 ## 2026-10-03 — 0.5.3 bug-fix release
 
 - **App version:** `0.5.3` debug-signed APK, version code 37.

@@ -93,7 +93,9 @@ data class RadioUiState(
     val txFrequencyRanges: List<RadioRange> = emptyList(),
     val txActive: Boolean = false,
     val txBusy: Boolean = false,
-    val txStatus: String = "AM TX unavailable",
+    val txStatus: String = "TX unavailable",
+    val txTimeoutSeconds: Int = 180,
+    val txMicrophonePeak: Double = 0.0,
     val txAttemptError: String? = null,
     val txRangesUnreported: Boolean = false,
     val allowUnknownTxRange: Boolean = false,
@@ -123,12 +125,32 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     private var selectedTxFormat: StreamFormatChoice? = null
     private var selectedTxSampleRate: Double? = null
     private var selectedTxCapabilities: RadioChannelCapabilities? = null
+    private var availableTxCapabilities: RadioChannelCapabilities? = null
+    private var txPermittedByServer = false
+
+    private fun txEmissionWidth(mode: String): Double = when (mode) {
+        "AM" -> 10_000.0
+        "NFM" -> 16_000.0
+        "USB", "LSB" -> 6_000.0
+        else -> Double.POSITIVE_INFINITY
+    }
     private var selectedRadioPreferenceKey: String? = null
     @Volatile private var radioService: RadioService? = null
     @Volatile private var resumeRxAfterTx = false
 
     init {
+        val savedTimeout = preferences.getInt("tx_timeout_seconds", 180)
+        if (savedTimeout in setOf(30, 60, 180, 300, 600)) {
+            mutableState.update { it.copy(txTimeoutSeconds = savedTimeout) }
+        }
         worker.execute { refreshProfiles() }
+    }
+
+    fun setTxTimeoutSeconds(seconds: Int) {
+        if (seconds !in setOf(30, 60, 180, 300, 600)) return
+        if (mutableState.value.txActive || mutableState.value.txBusy) return
+        preferences.edit().putInt("tx_timeout_seconds", seconds).apply()
+        mutableState.update { it.copy(txTimeoutSeconds = seconds) }
     }
 
     private fun refreshProfiles() {
@@ -229,6 +251,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 rxHardwareAgcOverride = null
                 rxAntennaOverride = null
                 selectedTxCapabilities = null
+                availableTxCapabilities = null
+                txPermittedByServer = false
                 val discovery = service.discover(RadioEndpoint(profile.host, profile.port))
                 val devices = discovery.devices.map { RadioDeviceChoice(it.label, it.arguments) }
                 mutableState.update { it.copy(devices = devices) }
@@ -280,6 +304,38 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
 
     fun attachService(service: RadioService) {
         radioService = service
+        service.activeReceiverSnapshot()?.let { active ->
+            if (activeReceiverConfig == null || selectedDevice == null) {
+                restoreActiveReceiver(active)
+            }
+            val generation = rxGeneration.get()
+            service.setReceiverCallbacks(
+                onStatistics = { stats ->
+                    if (generation == rxGeneration.get()) {
+                        mutableState.update {
+                            it.copy(
+                                rxStatus = "Playing ${it.mode} • %.1f ksps • RMS %.1f dBFS • gaps %d"
+                                    .format(stats.samplesPerSecond / 1_000, stats.rmsDbfs,
+                                        stats.sequenceGaps),
+                                rxStreamRateHz = stats.samplesPerSecond,
+                                rxSequenceGaps = stats.sequenceGaps,
+                            )
+                        }
+                    }
+                },
+                onSpectrum = { frame ->
+                    if (generation == rxGeneration.get()) {
+                        mutableState.update { it.copy(spectrum = frame) }
+                    }
+                },
+                onError = { error ->
+                    if (generation == rxGeneration.get()) {
+                        handleRxFailure(activeReceiverConfig ?: active.config, generation, 0,
+                            error, true)
+                    }
+                },
+            )
+        }
         service.setExternalStopListener { reason ->
             rxGeneration.incrementAndGet()
             pendingRxRetune?.cancel(false)
@@ -306,9 +362,60 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     txActive = transmitting,
                     txBusy = false,
                     rxStatus = if (!receiving && it.rxActive) "RX stopped" else it.rxStatus,
-                    txStatus = if (!transmitting && it.txActive) "AM TX stopped" else it.txStatus,
+                    txStatus = if (!transmitting && it.txActive) "TX stopped" else it.txStatus,
                 )
             }
+        }
+    }
+
+    private fun restoreActiveReceiver(active: RadioService.ActiveReceiverSnapshot) {
+        val config = active.config
+        rxGeneration.incrementAndGet()
+        mutableState.update {
+            it.copy(
+                host = config.endpoint.host,
+                port = config.endpoint.port.toString(),
+                frequency = config.frequencyHz.toLong().toString(),
+                bandwidth = config.bandwidthHz.toLong().toString(),
+                mode = config.mode,
+                nfmAudioCutoffHz = config.nfmAudioCutoffHz,
+                nfmDeemphasisUs = config.nfmDeemphasisUs,
+            )
+        }
+        active.deviceInfo?.let { info ->
+            val choice = RadioDeviceChoice(
+                info.hardwareKey.ifBlank { info.driverKey }, config.deviceArguments,
+            )
+            configureDevice(config.endpoint.host, config.endpoint.port, choice, info)
+        }
+        selectedPort = config.endpoint.port
+        selectedHost = config.endpoint.host
+        selectedDevice = config.deviceArguments
+        selectedRxFormat = StreamFormatChoice(config.format, config.fullScale)
+        activeReceiverConfig = config
+        activeRxFrequencyHz = config.frequencyHz
+        mutableState.update {
+            it.copy(
+                connectionState = RadioConnectionState.CONNECTED,
+                connectionStatus = "Connected to ${config.endpoint.host}",
+                rxActive = true,
+                rxBusy = false,
+                rxAvailable = true,
+                rxStatus = active.statistics?.let { stats ->
+                    "Playing ${config.mode} • %.1f ksps • RMS %.1f dBFS • gaps %d"
+                        .format(stats.samplesPerSecond / 1_000, stats.rmsDbfs, stats.sequenceGaps)
+                } ?: "Receiving ${config.mode}",
+                rxStreamFormat = config.format,
+                rxRequestedSampleRateHz = config.sampleRate,
+                rxHardwareBandwidthHz = config.hardwareBandwidthHz,
+                appliedSampleRateHz = active.appliedSampleRate,
+                rxAppliedHardwareBandwidthHz = active.appliedHardwareBandwidth,
+                rxStreamRateHz = active.statistics?.samplesPerSecond,
+                rxSequenceGaps = active.statistics?.sequenceGaps,
+                sampleRateHz = config.sampleRate,
+                spectrumSpanHz = config.spectrumSpanHz,
+                spectrum = active.spectrum,
+            )
         }
     }
 
@@ -325,7 +432,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 connectionState = RadioConnectionState.DISCONNECTED,
                 connectionStatus = "Radio service disconnected",
                 rxStatus = "RX stopped: radio service disconnected",
-                txStatus = "AM TX stopped: radio service disconnected",
+                txStatus = "TX stopped: radio service disconnected",
             )
         }
     }
@@ -438,12 +545,24 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         val snapshot = mutableState.value
         if (value == snapshot.mode || snapshot.rxBusy || snapshot.txActive || snapshot.txBusy
         ) return
+        selectedTxSampleRate = availableTxCapabilities?.let {
+            SampleRatePolicy.choose(it.sampleRates, it.sampleRateRanges, txEmissionWidth(value))
+                .automaticRate
+        }
+        selectedTxCapabilities = availableTxCapabilities?.takeIf {
+            txPermittedByServer && selectedTxFormat != null && selectedTxSampleRate != null
+        }
         mutableState.update {
             it.copy(
                 mode = value,
                 txAttemptError = null,
-                txAvailable = value == "AM" && selectedTxCapabilities != null &&
+                txAvailable = selectedTxCapabilities != null &&
                     (!it.txRangesUnreported || it.allowUnknownTxRange),
+                txStatus = if (selectedTxCapabilities == null)
+                    "TX unavailable: no usable ${value} TX sample rate or format"
+                else if (it.txRangesUnreported && !it.allowUnknownTxRange)
+                    "TX disabled: the radio did not report TX frequency limits"
+                else "${value} TX ready (${selectedTxFormat!!.format}, ${formatHz(selectedTxSampleRate!!)})",
             )
         }
         setBandwidth(defaultBandwidth.toString())
@@ -559,7 +678,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                                     nfmDeemphasisUs = previous?.nfmDeemphasisUs ?: it.nfmDeemphasisUs,
                                     sampleRateHz = previous?.sampleRate ?: it.sampleRateHz,
                                     rxAvailable = previous != null,
-                                    txAvailable = previous?.mode == "AM" && selectedTxCapabilities != null &&
+                                    txAvailable = selectedTxCapabilities != null &&
                                         (!it.txRangesUnreported || it.allowUnknownTxRange),
                                     rxStatus = "RX mode/filter change failed: ${error.message ?: error.javaClass.simpleName}",
                                 )
@@ -679,6 +798,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         rxHardwareAgcOverride = null
         rxAntennaOverride = null
         selectedTxCapabilities = null
+        availableTxCapabilities = null
+        txPermittedByServer = false
         worker.execute {
             val service = radioService
             if (service == null) {
@@ -795,9 +916,12 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         val transmitEnabled = info.metadata["daemon_transmit_enabled"]
             ?.toBooleanStrictOrNull() ?: true
         val txCapabilities = info.tx
+        availableTxCapabilities = txCapabilities
+        txPermittedByServer = stationOwner && transmitEnabled
         selectedTxFormat = txCapabilities.supportedFormat()
         selectedTxSampleRate = txCapabilities?.let {
-            SampleRatePolicy.choose(it.sampleRates, it.sampleRateRanges, bandwidth).automaticRate
+            SampleRatePolicy.choose(it.sampleRates, it.sampleRateRanges,
+                txEmissionWidth(mutableState.value.mode)).automaticRate
         }
         val txRangesUnreported = txCapabilities?.frequencyRanges?.isEmpty() == true
         val allowUnknownTxRange = txRangesUnreported && preferences.getBoolean(
@@ -805,21 +929,21 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             false,
         )
         selectedTxCapabilities = if (
-            stationOwner && transmitEnabled && selectedTxFormat != null &&
+            txPermittedByServer && selectedTxFormat != null &&
             selectedTxSampleRate != null && txCapabilities != null
         ) txCapabilities else null
         val txAvailable = selectedTxCapabilities != null &&
             (!txRangesUnreported || allowUnknownTxRange)
 
         val txMessage = when {
-            !stationOwner -> "AM TX unavailable: this client is not the station owner"
-            !transmitEnabled -> "AM TX unavailable: transmit is disabled by the radio server"
-            txCapabilities == null -> "AM TX unavailable: no TX channel"
-            selectedTxFormat == null -> "AM TX unavailable: no supported stream format"
-            selectedTxSampleRate == null -> "AM TX unavailable: no usable TX sample rate"
+            !stationOwner -> "TX unavailable: this client is not the station owner"
+            !transmitEnabled -> "TX unavailable: transmit is disabled by the radio server"
+            txCapabilities == null -> "TX unavailable: no TX channel"
+            selectedTxFormat == null -> "TX unavailable: no supported stream format"
+            selectedTxSampleRate == null -> "TX unavailable: no usable TX sample rate"
             txRangesUnreported && !allowUnknownTxRange ->
-                "AM TX disabled: the radio did not report TX frequency limits"
-            else -> "AM TX ready (${selectedTxFormat!!.format}, ${formatHz(selectedTxSampleRate!!)})"
+                "TX disabled: the radio did not report TX frequency limits"
+            else -> "TX ready (${selectedTxFormat!!.format}, ${formatHz(selectedTxSampleRate!!)})"
         }
         mutableState.update {
             it.copy(
@@ -859,7 +983,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     "RX unavailable: no supported rate or hardware bandwidth contains the passband"
                 },
-                txAvailable = txAvailable && it.mode == "AM",
+                txAvailable = txAvailable,
                 txFrequencyRanges = selectedTxCapabilities?.frequencyRanges.orEmpty(),
                 txStatus = txMessage,
                 txRangesUnreported = txRangesUnreported,
@@ -877,11 +1001,11 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 allowUnknownTxRange = enabled,
                 txAttemptError = null,
-                txAvailable = enabled && it.mode == "AM",
+                txAvailable = enabled,
                 txStatus = if (enabled) {
-                    "AM TX ready with unknown hardware frequency limits; operator validation required"
+                    "TX ready with unknown hardware frequency limits; operator validation required"
                 } else {
-                    "AM TX disabled: the radio did not report TX frequency limits"
+                    "TX disabled: the radio did not report TX frequency limits"
                 },
             )
         }
@@ -1216,8 +1340,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         radioService?.cancelPendingReceiver()
         resumeRxAfterTx = snapshot.rxActive
         mutableState.update {
-            it.copy(txBusy = true, txAttemptError = null,
-                txStatus = "Stopping RX and opening AM TX…")
+            it.copy(txBusy = true, txAttemptError = null, txMicrophonePeak = 0.0,
+                txStatus = "Stopping RX and opening ${snapshot.mode} TX…")
         }
         worker.execute {
             val service = radioService
@@ -1236,18 +1360,21 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         sampleRate = sampleRate,
                         format = format.format,
                         fullScale = format.fullScale,
+                        mode = snapshot.mode,
+                        timeoutSeconds = snapshot.txTimeoutSeconds,
                     ),
                     onStatistics = { stats ->
                         mutableState.update {
                             it.copy(
-                                txStatus = "TRANSMITTING AM • ${stats.secondsRemaining}s • " +
+                                txMicrophonePeak = stats.microphonePeak.coerceIn(0.0, 1.0),
+                                txStatus = "TRANSMITTING ${snapshot.mode} • ${stats.secondsRemaining}s • " +
                                     "mic %.0f%%".format(stats.microphonePeak * 100),
                             )
                         }
                     },
-                    onStopped = { stopTransmitter("AM TX time limit reached") },
+                    onStopped = { stopTransmitter("TX time limit reached") },
                     onError = { error ->
-                        val failure = RadioFailure.from("AM TX failed", error)
+                        val failure = RadioFailure.from("${snapshot.mode} TX failed", error)
                         mutableState.update {
                             it.copy(
                                 lastError = failure,
@@ -1267,18 +1394,19 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         rxStatus = "RX stopped for transmit",
                         txActive = true,
                         txBusy = false,
-                        txStatus = "TRANSMITTING AM; microphone active • " +
+                        txStatus = "TRANSMITTING ${snapshot.mode}; microphone active • " +
                             "applied ${formatHz(appliedSampleRate)}",
                     )
                 }
             }.onFailure { error ->
-                val failure = RadioFailure.from("Could not start AM TX", error)
+                val failure = RadioFailure.from("Could not start ${snapshot.mode} TX", error)
                 val resumeReceiver = resumeRxAfterTx
                 resumeRxAfterTx = false
                 mutableState.update {
                     it.copy(
                         txActive = false,
                         txBusy = false,
+                        txMicrophonePeak = 0.0,
                         lastError = failure,
                         recentErrors = (it.recentErrors + failure.displayMessage).takeLast(5),
                         observedTxUnderflows = it.observedTxUnderflows +
@@ -1291,14 +1419,15 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun stopTransmitter(message: String = "AM TX stopped") {
-        mutableState.update { it.copy(txBusy = true) }
+    fun stopTransmitter(message: String = "TX stopped") {
+        mutableState.update { it.copy(txBusy = true, txMicrophonePeak = 0.0) }
         val resumeReceiver = resumeRxAfterTx
         resumeRxAfterTx = false
         worker.execute {
             runCatching { radioService?.stopTransmitter() }
             mutableState.update {
-                it.copy(txActive = false, txBusy = false, txStatus = message)
+                it.copy(txActive = false, txBusy = false, txMicrophonePeak = 0.0,
+                    txStatus = message)
             }
             if (resumeReceiver) startReceiver()
         }

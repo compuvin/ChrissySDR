@@ -10,7 +10,9 @@ internal object TxControlPolicy {
         frequency: String,
         ranges: List<RadioRange>,
     ): String? {
-        if (mode != "AM") return "TX unavailable: only AM transmit is implemented"
+        if (mode !in setOf("AM", "NFM", "USB", "LSB")) {
+            return "TX unavailable: this mode cannot transmit"
+        }
         if (!deviceReady) return deviceStatus
         val frequencyHz = frequency.toDoubleOrNull()
         if (frequencyHz == null || !frequencyHz.isFinite() || frequencyHz <= 0.0 ||

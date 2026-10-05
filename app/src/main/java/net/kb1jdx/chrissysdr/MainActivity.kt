@@ -88,6 +88,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kb1jdx.chrissysdr.radio.RadioService
+import kotlin.math.log10
 import com.kb1jdx.chrissysdr.radio.RadioConnectionState
 import com.kb1jdx.chrissysdr.radio.SpectrumPolicy
 import kotlinx.coroutines.delay
@@ -135,7 +136,7 @@ class MainActivity : ComponentActivity() {
                     ActivityResultContracts.RequestPermission(),
                 ) { granted ->
                     if (!granted && microphoneRequestedForTx) {
-                        radio.reportTxAttemptError("Microphone access denied; AM transmit cannot start")
+                        radio.reportTxAttemptError("Microphone access denied; transmit cannot start")
                     }
                     microphoneRequestedForTx = false
                 }
@@ -192,6 +193,7 @@ class MainActivity : ComponentActivity() {
                     onRxAntennaChanged = radio::setRxAntenna,
                     onSpectrumTune = radio::tuneSpectrumTo,
                     onAllowUnknownTxRange = radio::setAllowUnknownTxRange,
+                    onTxTimeoutChanged = radio::setTxTimeoutSeconds,
                     onDiscover = {
                         if (Build.VERSION.SDK_INT >= 37 &&
                             checkSelfPermission(LOCAL_NETWORK_PERMISSION) !=
@@ -219,24 +221,20 @@ class MainActivity : ComponentActivity() {
                     onTxPressed = {
                         if (state.txActive) {
                             radio.stopTransmitter()
-                            true
                         } else {
                             val error = radio.validateTransmit()
                             if (error != null) {
                                 radio.reportTxAttemptError(error)
-                                false
                             } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
                                 PackageManager.PERMISSION_GRANTED
                             ) {
                                 microphoneRequestedForTx = true
                                 microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-                                false
                             } else {
-                                true
+                                radio.startTransmitter()
                             }
                         }
                     },
-                    onConfirmTx = radio::startTransmitter,
                 )
             }
         }
@@ -276,6 +274,7 @@ private fun RadioScreen(
     onRxAntennaChanged: (String) -> Unit,
     onSpectrumTune: (Double) -> Unit,
     onAllowUnknownTxRange: (Boolean) -> Unit,
+    onTxTimeoutChanged: (Int) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
     onProfileNameChanged: (String) -> Unit,
@@ -283,12 +282,10 @@ private fun RadioScreen(
     onLoadProfile: (String) -> Unit,
     onStartRx: () -> Unit,
     onStopRx: () -> Unit,
-    onTxPressed: () -> Boolean,
-    onConfirmTx: () -> Unit,
+    onTxPressed: () -> Unit,
 ) {
     var activeSheet by rememberSaveable { mutableStateOf<RadioSheet?>(null) }
     var quickConnectExpanded by remember { mutableStateOf(false) }
-    var showTransmitConfirmation by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = RadioBackground,
         topBar = {
@@ -317,9 +314,7 @@ private fun RadioScreen(
                 onTx = {
                     if (state.txActive) {
                         onTxPressed()
-                    } else if (onTxPressed()) {
-                        showTransmitConfirmation = true
-                    }
+                    } else onTxPressed()
                 },
             )
         },
@@ -330,14 +325,17 @@ private fun RadioScreen(
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
-            SpectrumDisplay(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                state = state,
-                onTuneFrequency = onSpectrumTune,
-                onSpanChanged = onSpectrumSpanChanged,
-            )
+            val mainPanelModifier = Modifier.fillMaxWidth().weight(1f)
+            if (state.txActive || state.txBusy) {
+                TransmitDisplay(mainPanelModifier, state)
+            } else {
+                SpectrumDisplay(
+                    modifier = mainPanelModifier,
+                    state = state,
+                    onTuneFrequency = onSpectrumTune,
+                    onSpanChanged = onSpectrumSpanChanged,
+                )
+            }
             Spacer(Modifier.height(12.dp))
             StatusPanel(state)
         }
@@ -375,6 +373,7 @@ private fun RadioScreen(
                     onSpectrumRangeChanged = onSpectrumRangeChanged,
                     onSpectrumSpanChanged = onSpectrumSpanChanged,
                     onAllowUnknownTxRange = onAllowUnknownTxRange,
+                    onTxTimeoutChanged = onTxTimeoutChanged,
                     onDiscover = onDiscover,
                     onInspect = onInspect,
                     onProfileNameChanged = onProfileNameChanged,
@@ -389,33 +388,68 @@ private fun RadioScreen(
         }
     }
 
-    if (showTransmitConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showTransmitConfirmation = false },
-            title = { Text("Confirm AM transmit") },
-            text = {
-                Text(
-                    "Transmit microphone audio on ${displayFrequency(state.frequency.toDoubleOrNull())} " +
-                        "for up to 30 seconds? Use a dummy load or controlled test setup and " +
-                        "operate only within your license privileges.",
-                )
-            },
-            dismissButton = {
-                TextButton(onClick = { showTransmitConfirmation = false }) { Text("Cancel") }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showTransmitConfirmation = false
-                        onConfirmTx()
-                    },
-                ) { Text("Start TX") }
-            },
-        )
-    }
 }
 
 private enum class RadioSheet { OPERATING, SETTINGS }
+
+@Composable
+private fun TransmitDisplay(modifier: Modifier, state: RadioUiState) {
+    val peak = state.txMicrophonePeak.coerceIn(0.0, 1.0)
+    val levelDbfs = if (peak > 0.0) (20.0 * log10(peak)).coerceAtLeast(-60.0) else -60.0
+    val meterFill = ((levelDbfs + 60.0) / 60.0).toFloat().coerceIn(0f, 1f)
+    val meterColor = if (levelDbfs >= -1.0) TxRed else SpectrumTrace
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = SpectrumBackground),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                if (state.txActive) "TRANSMITTING" else "PREPARING TX",
+                color = TxRed,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Black,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "${state.mode} • ${displayFrequency(state.frequency.toDoubleOrNull())}",
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 18.sp,
+            )
+            Spacer(Modifier.height(36.dp))
+            Text("MIC LEVEL", color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(12.dp))
+            Box(
+                Modifier.fillMaxWidth().height(24.dp)
+                    .background(RadioPanel, RoundedCornerShape(12.dp))
+                    .semantics { contentDescription = "Microphone peak ${"%.0f".format(levelDbfs)} dBFS" },
+            ) {
+                if (meterFill > 0f) {
+                    Box(
+                        Modifier.fillMaxWidth(meterFill).fillMaxHeight()
+                            .background(meterColor, RoundedCornerShape(12.dp)),
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (state.txActive) "Peak ${"%.0f".format(levelDbfs)} dBFS" else "Waiting for microphone…",
+                color = if (levelDbfs >= -1.0 && state.txActive) TxRed
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+            )
+            if (levelDbfs >= -1.0 && state.txActive) {
+                Text("Mic level is near clipping", color = TxRed, fontSize = 12.sp)
+            }
+        }
+    }
+}
 
 @Composable
 private fun RadioHeader(
@@ -1002,6 +1036,7 @@ private fun SettingsSheet(
     onSpectrumRangeChanged: (Int) -> Unit,
     onSpectrumSpanChanged: (Double?) -> Unit,
     onAllowUnknownTxRange: (Boolean) -> Unit,
+    onTxTimeoutChanged: (Int) -> Unit,
     onDiscover: () -> Unit,
     onInspect: (RadioDeviceChoice) -> Unit,
     onProfileNameChanged: (String) -> Unit,
@@ -1135,6 +1170,25 @@ private fun SettingsSheet(
                             onClick = { onSpectrumRangeChanged(range); rangeExpanded = false },
                         )
                     }
+                }
+            }
+        }
+        Text("Transmit timeout", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Automatically stops TX if it remains keyed.", fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        var txTimeoutExpanded by remember { mutableStateOf(false) }
+        Box {
+            OutlinedButton(onClick = { txTimeoutExpanded = true },
+                enabled = !state.txActive && !state.txBusy) {
+                Text("${state.txTimeoutSeconds / 60} min".takeIf { state.txTimeoutSeconds >= 60 }
+                    ?: "30 sec")
+            }
+            DropdownMenu(txTimeoutExpanded, onDismissRequest = { txTimeoutExpanded = false }) {
+                listOf(30, 60, 180, 300, 600).forEach { seconds ->
+                    DropdownMenuItem(
+                        text = { Text(if (seconds == 30) "30 sec" else "${seconds / 60} min") },
+                        onClick = { onTxTimeoutChanged(seconds); txTimeoutExpanded = false },
+                    )
                 }
             }
         }

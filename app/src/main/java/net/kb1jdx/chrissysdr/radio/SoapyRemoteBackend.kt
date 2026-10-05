@@ -107,14 +107,17 @@ class SoapyRemoteBackend(
             config.sampleRate,
             config.format,
             config.fullScale,
+            config.mode,
         )
         return object : RadioTransmitter {
             override val appliedSampleRate = session.outputSampleRate
             override fun start(
+                maximumSeconds: Int,
                 onStatistics: (TransmitterStatistics) -> Unit,
                 onStopped: () -> Unit,
                 onError: (Throwable) -> Unit,
             ) = session.start(
+                maximumSeconds = maximumSeconds,
                 onStatistics = { stats ->
                     onStatistics(
                         TransmitterStatistics(
