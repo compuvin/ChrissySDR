@@ -12,6 +12,17 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-06 — Notification-return spectrum smoothing
+
+- **App version:** `0.5.4-dev.13` local debug APK, version code 50.
+- **Cause found for #1:** The spectrum callback installed when reattaching to
+  an active receiver bypassed the averaging used by the normal RX callback.
+- **Change:** Both callbacks now use the same spectrum smoothing path. Remove
+  the visible “Swipe up to close” text from Settings while retaining its
+  compact drag handle and accessibility description.
+- **Device result:** Operator confirms the notification-return spectrum now
+  looks normal and the smaller Settings close handle looks good.
+
 ## 2026-10-06 — Settings swipe-up close handle
 
 - **App version:** `0.5.4-dev.12` local debug APK, version code 49.

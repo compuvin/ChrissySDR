@@ -325,7 +325,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 },
                 onSpectrum = { frame ->
                     if (generation == rxGeneration.get()) {
-                        mutableState.update { it.copy(spectrum = frame) }
+                        updateSpectrum(frame)
                     }
                 },
                 onError = { error ->
@@ -416,6 +416,14 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 spectrumSpanHz = config.spectrumSpanHz,
                 spectrum = active.spectrum,
             )
+        }
+    }
+
+    private fun updateSpectrum(frame: SpectrumFrame) {
+        mutableState.update { current ->
+            current.copy(spectrum = smoothSpectrum(
+                current.spectrum, frame, current.spectrumAveraging,
+            ))
         }
     }
 
@@ -1177,19 +1185,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     },
                     onSpectrum = { frame ->
                         if (generation == rxGeneration.get()) {
-                            mutableState.update { current ->
-                                val previous = current.spectrum
-                                val weight = current.spectrumAveraging
-                                val bins = if (previous != null &&
-                                    previous.centerFrequencyHz == frame.centerFrequencyHz &&
-                                    previous.sampleRateHz == frame.sampleRateHz &&
-                                    previous.binsDbfs.size == frame.binsDbfs.size
-                                ) FloatArray(frame.binsDbfs.size) { index ->
-                                    previous.binsDbfs[index] * (1f - weight) +
-                                        frame.binsDbfs[index] * weight
-                                } else frame.binsDbfs
-                                current.copy(spectrum = frame.copy(binsDbfs = bins))
-                            }
+                            updateSpectrum(frame)
                         }
                     },
                     onError = { error ->

@@ -447,7 +447,7 @@ private fun TopSettingsDialog(onDismiss: () -> Unit, content: @Composable () -> 
                         }
                         Box(Modifier.weight(1f)) { content() }
                         Column(
-                            modifier = Modifier.fillMaxWidth().height(48.dp)
+                            modifier = Modifier.fillMaxWidth().height(28.dp)
                                 .pointerInput(Unit) {
                                     var dragDistance = 0f
                                     detectVerticalDragGestures(
@@ -465,8 +465,6 @@ private fun TopSettingsDialog(onDismiss: () -> Unit, content: @Composable () -> 
                             Spacer(Modifier.width(44.dp).height(4.dp)
                                 .background(MaterialTheme.colorScheme.onSurfaceVariant,
                                     RoundedCornerShape(2.dp)))
-                            Text("Swipe up to close", fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
