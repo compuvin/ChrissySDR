@@ -31,7 +31,7 @@ data class RxStatistics(
 )
 
 class SoapyRemoteRxSession private constructor(
-    private val control: Socket,
+    private val device: SoapyRemoteDeviceConnection,
     private val stream: Socket,
     private val status: Socket,
     private val streamId: Int,
@@ -270,38 +270,40 @@ class SoapyRemoteRxSession private constructor(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        var cleanupConfirmed = true
         if (running.getAndSet(false)) {
             runCatching {
-                transact(
+                val result = transact(
                     SoapyRpcWriter().call(DEACTIVATE_STREAM).int32(streamId).int32(0).int64(0),
                 ) { it.int32() }
-            }
+                check(result == 0) { "SoapyRemote deactivateStream returned $result" }
+            }.onFailure { cleanupConfirmed = false }
         }
+        // Stop Android playback without waiting for the RX reader to exit.
+        // SoapyRemote needs the stream endpoints intact until CLOSE_STREAM
+        // returns, just as it does for the TX stream lifecycle.
+        val output = audioOutput
+        audioOutput = null
+        output?.runCatching { close() }
+        runCatching {
+            device.transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(streamId), 3_000) {
+                it.requireVoid()
+            }
+        }.onFailure { cleanupConfirmed = false }
         runCatching { stream.close() }
         runCatching { status.close() }
         if (Thread.currentThread() !== readerThread) {
-            runCatching { readerThread?.join(2_000) }
+            runCatching { readerThread?.join(250) }
         }
-        audioOutput?.runCatching { close() }
-        audioOutput = null
-        runCatching { transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(streamId)) { it.requireVoid() } }
-        runCatching { transact(SoapyRpcWriter().call(UNMAKE)) { it.requireVoid() } }
-        runCatching { transact(SoapyRpcWriter().call(HANGUP)) { it.requireVoid() } }
-        runCatching { control.close() }
+        if (!cleanupConfirmed) device.invalidate()
     }
 
-    @Synchronized
     private fun <T> transact(request: SoapyRpcWriter, decode: (SoapyRpcReader) -> T): T {
-        control.getOutputStream().apply { write(request.frame().encode()); flush() }
-        val reader = SoapyRpcReader(SoapyRpcFrame.readFrom(control.getInputStream()).payload)
-        return decode(reader).also { reader.requireFinished() }
+        return device.transact(request, decode = decode)
     }
 
     companion object {
         private const val RX = 1
-        private const val MAKE = 1
-        private const val UNMAKE = 2
-        private const val HANGUP = 3
         private const val SETUP_STREAM = 300
         private const val CLOSE_STREAM = 301
         private const val ACTIVATE_STREAM = 302
@@ -323,10 +325,8 @@ class SoapyRemoteRxSession private constructor(
         private const val SET_SAMPLE_RATE = 900
         private const val GET_SAMPLE_RATE = 901
 
-        fun open(
-            host: String,
-            port: Int,
-            deviceArgs: Map<String, String>,
+        internal fun open(
+            device: SoapyRemoteDeviceConnection,
             frequencyHz: Double,
             bandwidthHz: Double,
             hardwareBandwidthHz: Double?,
@@ -352,24 +352,12 @@ class SoapyRemoteRxSession private constructor(
                 "Unsupported NFM audio cutoff"
             }
             require(nfmDeemphasisUs in listOf(0, 50, 75)) { "Unsupported NFM deemphasis" }
-            val control = Socket().also(cancellation::register)
             var stream: Socket? = null
             var status: Socket? = null
-            var made = false
             var streamId: Int? = null
-            fun <T> transact(request: SoapyRpcWriter, decode: (SoapyRpcReader) -> T): T {
-                control.getOutputStream().apply { write(request.frame().encode()); flush() }
-                val reader = SoapyRpcReader(SoapyRpcFrame.readFrom(control.getInputStream()).payload)
-                return decode(reader).also { reader.requireFinished() }
-            }
+            fun <T> transact(request: SoapyRpcWriter, decode: (SoapyRpcReader) -> T): T =
+                device.transact(request, decode = decode)
             try {
-                control.connect(InetSocketAddress(host.trim(), port), 3_000)
-                control.soTimeout = 10_000
-
-                transact(SoapyRpcWriter().call(MAKE).kwargs(deviceArgs - "soapy_remote_no_deeper")) {
-                    it.requireVoid()
-                }
-                made = true
                 transact(
                     SoapyRpcWriter().call(SET_SAMPLE_RATE).char(RX).int32(0).float64(sampleRate),
                 ) { it.requireVoid() }
@@ -424,31 +412,33 @@ class SoapyRemoteRxSession private constructor(
                     )
                     .string("")
                     .string("")
-                control.getOutputStream().apply { write(setup.frame().encode()); flush() }
-                val bindPort = SoapyRpcReader(
-                    SoapyRpcFrame.readFrom(control.getInputStream()).payload,
-                ).let { reader -> reader.string().toInt().also { reader.requireFinished() } }
+                device.exchange { control ->
+                    control.getOutputStream().apply { write(setup.frame().encode()); flush() }
+                    val bindPort = SoapyRpcReader(
+                        SoapyRpcFrame.readFrom(control.getInputStream()).payload,
+                    ).let { reader -> reader.string().toInt().also { reader.requireFinished() } }
 
-                stream = Socket().apply {
-                    cancellation.register(this)
-                    receiveBufferSize = SOCKET_WINDOW
-                    connect(InetSocketAddress(host.trim(), bindPort), 3_000)
-                    soTimeout = 1_000
-                }
-                status = Socket().apply {
-                    cancellation.register(this)
-                    connect(InetSocketAddress(host.trim(), bindPort), 3_000)
-                }
+                    stream = Socket().apply {
+                        cancellation.register(this)
+                        receiveBufferSize = SOCKET_WINDOW
+                        connect(InetSocketAddress(device.endpoint.host, bindPort), 3_000)
+                        soTimeout = 1_000
+                    }
+                    status = Socket().apply {
+                        cancellation.register(this)
+                        connect(InetSocketAddress(device.endpoint.host, bindPort), 3_000)
+                    }
 
-                val setupReply = SoapyRpcReader(
-                    SoapyRpcFrame.readFrom(control.getInputStream()).payload,
-                )
-                streamId = setupReply.int32()
-                setupReply.string() // repeated server port
-                setupReply.requireFinished()
+                    val setupReply = SoapyRpcReader(
+                        SoapyRpcFrame.readFrom(control.getInputStream()).payload,
+                    )
+                    streamId = setupReply.int32()
+                    setupReply.string() // repeated server port
+                    setupReply.requireFinished()
+                }
                 sendAck(stream!!.getOutputStream(), 0, FLOW_WINDOW_PACKETS)
                 return SoapyRemoteRxSession(
-                    control, stream!!, status!!, streamId, appliedSampleRate,
+                    device, stream!!, status!!, streamId!!, appliedSampleRate,
                     appliedHardwareBandwidth,
                     SpectrumPolicy.displayRate(appliedSampleRate), format, fullScale,
                     frequencyHz, ReceiverDspSettings(mode, bandwidthHz,
@@ -458,19 +448,12 @@ class SoapyRemoteRxSession private constructor(
             } catch (error: Throwable) {
                 runCatching { stream?.close() }
                 runCatching { status?.close() }
-                if (control.isConnected && !control.isClosed) {
-                    runCatching { control.soTimeout = 1_000 }
-                    streamId?.let { id ->
-                        runCatching {
-                            transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(id)) { it.requireVoid() }
-                        }
+                streamId?.let { id -> runCatching {
+                    device.transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(id), 1_000) {
+                        it.requireVoid()
                     }
-                    if (made) {
-                        runCatching { transact(SoapyRpcWriter().call(UNMAKE)) { it.requireVoid() } }
-                    }
-                    runCatching { transact(SoapyRpcWriter().call(HANGUP)) { it.requireVoid() } }
-                }
-                runCatching { control.close() }
+                } }
+                device.invalidate()
                 throw error
             }
         }

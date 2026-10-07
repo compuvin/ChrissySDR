@@ -9,6 +9,8 @@ import java.nio.ByteOrder
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 data class TxStatistics(
@@ -19,7 +21,7 @@ data class TxStatistics(
 )
 
 class SoapyRemoteTxSession private constructor(
-    private val control: Socket,
+    private val device: SoapyRemoteDeviceConnection,
     private val stream: Socket,
     private val status: Socket,
     private val streamId: Int,
@@ -31,6 +33,8 @@ class SoapyRemoteTxSession private constructor(
     private val sampleCodec = IqSampleCodec(streamFormat, fullScale)
     private val running = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
+    private val closeComplete = CountDownLatch(1)
+    @Volatile private var closeFailure: Throwable? = null
     private var writerThread: Thread? = null
     @Volatile private var microphoneInput: AndroidMicrophoneInput? = null
 
@@ -158,8 +162,8 @@ class SoapyRemoteTxSession private constructor(
             if (timedOut) onStopped()
         } catch (error: Throwable) {
             if (running.get()) {
-                close()
-                onError(error)
+                val closeError = runCatching { close() }.exceptionOrNull()
+                onError(closeError ?: error)
             }
         }
     }
@@ -169,48 +173,93 @@ class SoapyRemoteTxSession private constructor(
     }
 
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
-        running.set(false)
-        microphoneInput?.runCatching { close() }
-        microphoneInput = null
-        // The microphone paces TX in real time, so there should only be a very
-        // small downstream cushion. Let already-submitted samples reach the
-        // radio before deactivating without waiting for a potentially large or
-        // driver-dependent transport buffer to drain.
-        runCatching { Thread.sleep(TX_TAIL_DRAIN_MS) }
-        runCatching {
-            transact(
-                SoapyRpcWriter().call(DEACTIVATE_STREAM).int32(streamId).int32(0).int64(0),
-            ) { it.int32() }
+        if (!closed.compareAndSet(false, true)) {
+            check(closeComplete.await(TX_CLOSE_WATCHDOG_MS + 1_000, TimeUnit.MILLISECONDS)) {
+                "Concurrent TX shutdown did not finish"
+            }
+            closeFailure?.let { throw it }
+            return
         }
-        // The writer may be waiting for a flow-control ACK. Interrupt its socket
-        // waits immediately instead of delaying the RX hand-back by up to the
-        // stream socket timeout.
-        runCatching { stream.shutdownInput() }
-        runCatching { stream.shutdownOutput() }
-        runCatching { status.close() }
-        if (Thread.currentThread() !== writerThread) {
-            runCatching { writerThread?.join(250) }
+        val failures = ArrayList<String>()
+        val watchdogFired = AtomicBoolean(false)
+        Thread({
+            try {
+                Thread.sleep(TX_CLOSE_WATCHDOG_MS)
+                if (closeComplete.count > 0) {
+                    watchdogFired.set(true)
+                    forceCloseSockets()
+                    device.invalidate()
+                }
+            } catch (_: InterruptedException) { }
+        }, "SoapyRemote-TX-close-watchdog").apply { isDaemon = true; start() }
+        fun stage(name: String, critical: Boolean = true, action: () -> Unit): Boolean {
+            try {
+                action()
+                return true
+            } catch (error: Throwable) {
+                if (critical) failures += "$name: ${error.message ?: error.javaClass.simpleName}"
+                return false
+            }
         }
-        runCatching { transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(streamId)) { it.requireVoid() } }
-        runCatching { stream.close() }
-        runCatching { transact(SoapyRpcWriter().call(UNMAKE)) { it.requireVoid() } }
-        runCatching { transact(SoapyRpcWriter().call(HANGUP)) { it.requireVoid() } }
-        runCatching { control.close() }
+        try {
+            running.set(false)
+            // Retain only a short tail; do not wait for a radio-dependent buffer drain.
+            stage("short TX tail", critical = false) { Thread.sleep(TX_TAIL_DRAIN_MS) }
+            stage("microphone stop") { microphoneInput?.close() }
+            microphoneInput = null
+            stage("stop TX writer") {
+                if (Thread.currentThread() !== writerThread) {
+                    writerThread?.join(TX_WRITER_JOIN_MS)
+                    if (writerThread?.isAlive == true) {
+                        // Only interrupt the endpoint if the writer cannot stop cooperatively.
+                        // In the normal path, keep it intact through the closeStream reply.
+                        runCatching { stream.shutdownInput() }
+                        runCatching { stream.shutdownOutput() }
+                        runCatching { status.close() }
+                        writerThread?.join(TX_WRITER_JOIN_MS)
+                    }
+                    check(writerThread?.isAlive != true) { "TX writer did not stop" }
+                }
+            }
+            val deactivated = stage("deactivateStream") {
+                val result = transact(
+                    SoapyRpcWriter().call(DEACTIVATE_STREAM).int32(streamId).int32(0).int64(0),
+                    TX_RPC_TIMEOUT_MS,
+                ) { it.int32() }
+                check(result == 0) { "SoapyRemote returned $result" }
+            }
+            val streamClosed = if (deactivated) stage("closeStream") {
+                transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(streamId),
+                    TX_CLOSE_STREAM_TIMEOUT_MS) { it.requireVoid() }
+            } else false
+            // Match the upstream SoapyRemote client: keep the data and status
+            // endpoints alive until closeStream has returned.
+            stage("stream socket close", critical = false) { stream.close() }
+            stage("status socket close", critical = false) { status.close() }
+            if (!streamClosed) failures += "device stream remains unconfirmed"
+        } finally {
+            forceCloseSockets()
+            if (watchdogFired.get()) failures += "transport watchdog expired"
+            if (failures.isNotEmpty()) device.invalidate()
+            closeFailure = failures.takeIf { it.isNotEmpty() }?.let {
+                IllegalStateException("TX shutdown unconfirmed: ${it.joinToString("; ")}")
+            }
+            closeComplete.countDown()
+        }
+        closeFailure?.let { throw it }
     }
 
-    @Synchronized
-    private fun <T> transact(request: SoapyRpcWriter, decode: (SoapyRpcReader) -> T): T {
-        control.getOutputStream().apply { write(request.frame().encode()); flush() }
-        val reader = SoapyRpcReader(SoapyRpcFrame.readFrom(control.getInputStream()).payload)
-        return decode(reader).also { reader.requireFinished() }
+    private fun forceCloseSockets() {
+        runCatching { stream.close() }
+        runCatching { status.close() }
     }
+
+    private fun <T> transact(request: SoapyRpcWriter, timeoutMs: Int =
+        SoapyRemoteDeviceConnection.DEFAULT_RPC_TIMEOUT_MS,
+        decode: (SoapyRpcReader) -> T): T = device.transact(request, timeoutMs, decode)
 
     companion object {
         private const val TX = 0
-        private const val MAKE = 1
-        private const val UNMAKE = 2
-        private const val HANGUP = 3
         private const val SETUP_STREAM = 300
         private const val CLOSE_STREAM = 301
         private const val ACTIVATE_STREAM = 302
@@ -224,11 +273,13 @@ class SoapyRemoteTxSession private constructor(
         private const val SOCKET_WINDOW = 1_048_576
         private const val MICROPHONE_SAMPLE_RATE = 48_000
         private const val TX_TAIL_DRAIN_MS = 40L
+        private const val TX_WRITER_JOIN_MS = 250L
+        private const val TX_RPC_TIMEOUT_MS = 1_500
+        private const val TX_CLOSE_STREAM_TIMEOUT_MS = 3_000
+        private const val TX_CLOSE_WATCHDOG_MS = 7_000L
 
-        fun open(
-            host: String,
-            port: Int,
-            deviceArgs: Map<String, String>,
+        internal fun open(
+            device: SoapyRemoteDeviceConnection,
             frequencyHz: Double,
             sampleRate: Double,
             format: String,
@@ -237,24 +288,12 @@ class SoapyRemoteTxSession private constructor(
         ): SoapyRemoteTxSession {
             require(sampleRate >= 8_000) { "TX sample rate must be at least 8000 Hz" }
             IqSampleCodec(format, fullScale)
-            val control = Socket()
             var stream: Socket? = null
             var status: Socket? = null
-            var made = false
             var streamId: Int? = null
-            fun <T> transact(request: SoapyRpcWriter, decode: (SoapyRpcReader) -> T): T {
-                control.getOutputStream().apply { write(request.frame().encode()); flush() }
-                val reader = SoapyRpcReader(SoapyRpcFrame.readFrom(control.getInputStream()).payload)
-                return decode(reader).also { reader.requireFinished() }
-            }
+            fun <T> transact(request: SoapyRpcWriter, decode: (SoapyRpcReader) -> T): T =
+                device.transact(request, decode = decode)
             try {
-                control.connect(InetSocketAddress(host.trim(), port), 3_000)
-                control.soTimeout = 10_000
-
-                transact(SoapyRpcWriter().call(MAKE).kwargs(deviceArgs - "soapy_remote_no_deeper")) {
-                    it.requireVoid()
-                }
-                made = true
                 transact(
                     SoapyRpcWriter().call(SET_SAMPLE_RATE).char(TX).int32(0).float64(sampleRate),
                 ) { it.requireVoid() }
@@ -282,42 +321,39 @@ class SoapyRemoteTxSession private constructor(
                     )
                     .string("")
                     .string("")
-                control.getOutputStream().apply { write(setup.frame().encode()); flush() }
-                val bindPort = SoapyRpcReader(
-                    SoapyRpcFrame.readFrom(control.getInputStream()).payload,
-                ).let { reader -> reader.string().toInt().also { reader.requireFinished() } }
+                device.exchange { control ->
+                    control.getOutputStream().apply { write(setup.frame().encode()); flush() }
+                    val bindPort = SoapyRpcReader(
+                        SoapyRpcFrame.readFrom(control.getInputStream()).payload,
+                    ).let { reader -> reader.string().toInt().also { reader.requireFinished() } }
 
-                stream = Socket().apply {
-                    sendBufferSize = SOCKET_WINDOW
-                    connect(InetSocketAddress(host.trim(), bindPort), 3_000)
-                    soTimeout = 3_000
+                    stream = Socket().apply {
+                        sendBufferSize = SOCKET_WINDOW
+                        connect(InetSocketAddress(device.endpoint.host, bindPort), 3_000)
+                        soTimeout = 3_000
+                    }
+                    status = Socket().apply {
+                        connect(InetSocketAddress(device.endpoint.host, bindPort), 3_000)
+                    }
+                    val setupReply = SoapyRpcReader(
+                        SoapyRpcFrame.readFrom(control.getInputStream()).payload,
+                    )
+                    streamId = setupReply.int32()
+                    setupReply.string()
+                    setupReply.requireFinished()
                 }
-                status = Socket().apply { connect(InetSocketAddress(host.trim(), bindPort), 3_000) }
-                val setupReply = SoapyRpcReader(
-                    SoapyRpcFrame.readFrom(control.getInputStream()).payload,
-                )
-                streamId = setupReply.int32()
-                setupReply.string()
-                setupReply.requireFinished()
                 return SoapyRemoteTxSession(
-                    control, stream!!, status!!, streamId, appliedSampleRate, format, fullScale, mode,
+                    device, stream!!, status!!, streamId!!, appliedSampleRate, format, fullScale, mode,
                 )
             } catch (error: Throwable) {
                 runCatching { stream?.close() }
                 runCatching { status?.close() }
-                if (control.isConnected && !control.isClosed) {
-                    runCatching { control.soTimeout = 1_000 }
-                    streamId?.let { id ->
-                        runCatching {
-                            transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(id)) { it.requireVoid() }
-                        }
+                streamId?.let { id -> runCatching {
+                    device.transact(SoapyRpcWriter().call(CLOSE_STREAM).int32(id), 1_000) {
+                        it.requireVoid()
                     }
-                    if (made) {
-                        runCatching { transact(SoapyRpcWriter().call(UNMAKE)) { it.requireVoid() } }
-                    }
-                    runCatching { transact(SoapyRpcWriter().call(HANGUP)) { it.requireVoid() } }
-                }
-                runCatching { control.close() }
+                } }
+                device.invalidate()
                 throw error
             }
         }

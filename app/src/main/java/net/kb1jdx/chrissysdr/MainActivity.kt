@@ -739,9 +739,11 @@ private fun StatusPanel(state: RadioUiState) {
                     state.rxActive || state.rxBusy -> state.rxStatus
                     else -> "Ready • ${state.rxStatus}"
                 },
-                color = if (state.txActive) TxRed else MaterialTheme.colorScheme.onSurface,
+                color = if (state.txActive) TxRed
+                    else MaterialTheme.colorScheme.onSurface,
                 fontSize = 13.sp,
-                fontWeight = if (state.txActive) FontWeight.Bold else FontWeight.Normal,
+                fontWeight = if (state.txActive)
+                    FontWeight.Bold else FontWeight.Normal,
             )
             if (!state.txActive && state.txAttemptError != null) {
                 Text(state.txAttemptError, fontSize = 11.sp,
@@ -790,7 +792,10 @@ private fun OperatingBar(
                 ),
                 contentPadding = PaddingValues(0.dp),
             ) {
-                Text(if (transmitting) "STOP" else "TX", fontWeight = FontWeight.Black)
+                Text(when {
+                    transmitting -> "STOP"
+                    else -> "TX"
+                }, fontWeight = FontWeight.Black, fontSize = 14.sp)
             }
             Column(
                 modifier = Modifier.weight(1f).clickable(onClick = onOpenControls),

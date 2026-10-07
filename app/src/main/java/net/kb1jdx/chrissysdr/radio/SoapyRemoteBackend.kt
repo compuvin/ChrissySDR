@@ -3,6 +3,7 @@ package com.kb1jdx.chrissysdr.radio
 import com.kb1jdx.chrissysdr.soapyremote.SoapyChannelCapabilities
 import com.kb1jdx.chrissysdr.soapyremote.SoapyArgInfo
 import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteClient
+import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteDeviceConnection
 import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteRxSession
 import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteTxSession
 import com.kb1jdx.chrissysdr.soapyremote.SoapySensor
@@ -11,6 +12,43 @@ import com.kb1jdx.chrissysdr.soapyremote.SoapySetting
 class SoapyRemoteBackend(
     private val client: SoapyRemoteClient = SoapyRemoteClient(),
 ) : RadioBackend {
+    private var activeDevice: SoapyRemoteDeviceConnection? = null
+
+    @Synchronized
+    private fun device(
+        endpoint: RadioEndpoint,
+        arguments: Map<String, String>,
+        cancellation: RadioOpenCancellation? = null,
+    ): SoapyRemoteDeviceConnection {
+        val normalized = endpoint.copy(host = endpoint.host.trim())
+        val args = arguments - "soapy_remote_no_deeper"
+        activeDevice?.takeIf {
+            it.isUsable && it.endpoint == normalized && it.deviceArguments == args
+        }?.let { existing ->
+            cancellation?.let(existing::registerCancellation)
+            return existing
+        }
+        activeDevice?.close()
+        activeDevice = null
+        return SoapyRemoteDeviceConnection.open(normalized, args, cancellation).also {
+            activeDevice = it
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        val current = activeDevice
+        activeDevice = null
+        current?.close()
+    }
+
+    @Synchronized
+    override fun abandon() {
+        val current = activeDevice
+        activeDevice = null
+        current?.invalidate()
+    }
+
     override fun discover(endpoint: RadioEndpoint): RadioDiscovery {
         val result = client.discover(endpoint.host, endpoint.port)
         return RadioDiscovery(
@@ -47,9 +85,7 @@ class SoapyRemoteBackend(
 
     override fun openReceiver(config: ReceiverConfig, cancellation: RadioOpenCancellation): RadioReceiver {
         val session = SoapyRemoteRxSession.open(
-            config.endpoint.host,
-            config.endpoint.port,
-            config.deviceArguments,
+            device(config.endpoint, config.deviceArguments, cancellation),
             config.frequencyHz,
             config.bandwidthHz,
             config.hardwareBandwidthHz,
@@ -100,9 +136,7 @@ class SoapyRemoteBackend(
 
     override fun openTransmitter(config: TransmitterConfig): RadioTransmitter {
         val session = SoapyRemoteTxSession.open(
-            config.endpoint.host,
-            config.endpoint.port,
-            config.deviceArguments,
+            device(config.endpoint, config.deviceArguments),
             config.frequencyHz,
             config.sampleRate,
             config.format,

@@ -159,4 +159,8 @@ interface RadioBackend {
     fun inspect(endpoint: RadioEndpoint, deviceArguments: Map<String, String>): RadioDeviceCapabilities
     fun openReceiver(config: ReceiverConfig, cancellation: RadioOpenCancellation): RadioReceiver
     fun openTransmitter(config: TransmitterConfig): RadioTransmitter
+    /** Release a device retained across RX/TX stream handoffs. */
+    fun close() {}
+    /** Drop a control connection whose stream cleanup could not be confirmed. */
+    fun abandon() = close()
 }

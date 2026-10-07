@@ -12,6 +12,99 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-05 — Shared SoapyRemote device handoff
+
+- **App version:** `0.5.4-dev.5` local debug APK, version code 42.
+- **Device result:** TX shutdown remained confirmed and RX resumed. Two TX
+  preparation measurements were 969 ms (RX close 287 ms) and 3046 ms (RX close
+  2220 ms). The operator observed the Preparing TX message for more than four
+  seconds on the slower run.
+- **Comparison:** SDR Oxide keeps one Soapy device open across RX/TX handoffs.
+  On half-duplex devices it closes the RX stream before TX, but does not
+  destroy and remake the device on every key-up.
+- **Change in `0.5.4-dev.6`:** Keep one SoapyRemote MAKE/control connection for
+  successive RX and TX streams, closing it only when the radio service stops or
+  the selected endpoint/device changes. Close Android RX audio before joining
+  the RX reader. Remove the temporary TX shutdown timeline and preparation
+  timing from the app and Logcat. The persistent unconfirmed-cleanup lockout
+  was subsequently removed at the operator's request; normal error reporting
+  and the brief in-progress cleanup guard remain.
+- **Device result for dev.6:** Pending. Faster key-up and clean TX/RX cycling
+  require hardware testing; a successful build alone is not sufficient.
+
+## 2026-10-05 — TX cleanup lockout removed
+
+- **App version:** `0.5.4-dev.7` local debug APK, version code 44.
+- **Change:** Remove the persistent unconfirmed-cleanup lockout and its locked
+  TX screen/button state. TX/RX can cycle again after a cleanup error; cleanup
+  in progress still temporarily blocks a new stream. Keep a normal error
+  message and invalidate the shared SoapyRemote connection when stream close
+  cannot be confirmed.
+- **Device result:** Pending live TX/RX test.
+
+## 2026-10-05 — RX-to-TX handoff latency follow-up
+
+- **App version:** `0.5.4-dev.8` local debug APK, version code 45.
+- **Observation:** The operator reports roughly four seconds of Preparing TX
+  with dev.7. Earlier timing showed RX close alone sometimes taking 2220 ms.
+- **Change:** RX shutdown no longer waits up to two seconds for the reader
+  before issuing `CLOSE_STREAM`. It keeps stream endpoints open through that
+  reply, then closes them and allows a short reader join.
+- **Device result:** Operator reports the TX handoff feels better; the
+  “Preparing to transmit” message remains visible briefly. No precise timing
+  measurement or repeated-cycle result was reported yet.
+
+## 2026-10-05 — TX lifecycle test and preparation timing
+
+- **App version:** `0.5.4-dev.4` local debug APK, version code 41.
+- **Device result:** Operator confirmed TX shutdown succeeded after the lifecycle
+  ordering change. The previous `closeStream` timeout was not observed in this
+  test. TX preparation still feels too slow for on-air use.
+- **Follow-up in `0.5.4-dev.5`:** Diagnostics retains only the latest bounded
+  TX shutdown trace, normal per-stage Logcat messages are removed, and one
+  summary measures RX close, TX session open, and TX start durations. The
+  preparation delay has not yet been measured or fixed.
+
+## 2026-10-05 — TX shutdown lifecycle alignment
+
+- **App version:** `0.5.4-dev.4` local debug APK, version code 41; not published.
+- **Observation in `0.5.4-dev.3`:** `deactivateStream` completed in 487 ms,
+  but `closeStream` still timed out after three seconds. Closing the data
+  socket before the RPC did not resolve issue #3.
+- **Code audit:** The TX writer was not joined until after deactivation, and
+  data/status sockets were closed before the close-stream reply. These differ
+  from SoapySDR's stream lifecycle guidance and the upstream SoapyRemote client.
+- **Change:** Stop the microphone and join the TX writer before deactivation;
+  retain data/status sockets until the close-stream RPC returns. A writer that
+  cannot stop is interrupted, and any unconfirmed stage still locks RX and TX.
+- **Device result:** Pending controlled retest of issue #3.
+
+## 2026-10-05 — TX stream-close follow-up
+
+- **App version:** `0.5.4-dev.3` local debug APK, version code 40; not published.
+- **Observation in `0.5.4-dev.2`:** Issue #3 reproduced three times. The first
+  shutdown timed out waiting for `deactivateStream`; the next two confirmed
+  deactivation in 389–480 ms but timed out waiting for `closeStream` after
+  1.5 seconds. SoapyRemote stayed responsive on the latter two runs.
+- **Change:** Close the TX data socket before requesting `closeStream`, allowing
+  the server's stream worker to exit before it joins that worker. Allow up to
+  three seconds for the close reply, with an eight-second overall service bound.
+  Unconfirmed cleanup still blocks RX and TX.
+- **Device result:** Pending controlled retest; the logs do not yet establish
+  that this sequencing change resolves issue #3.
+
+## 2026-10-05 — TX shutdown diagnostics and bounded cleanup
+
+- **App version:** `0.5.4-dev.2` local debug APK, version code 39; not published.
+- **Scope:** Records timed TX shutdown stages in Diagnostics and Logcat. Cleanup
+  has a transport watchdog and a bounded service wait; RX and TX are blocked
+  during shutdown and after an unconfirmed shutdown. The app shows a prominent
+  TX-state-unknown warning in that case. RX is restored only after confirmed
+  cleanup.
+- **Automated result:** Debug APK assembly and unit tests passed.
+- **Device result:** Pending controlled retest of issue #3. A successful build
+  does not establish that SoapyRemote or the radio releases every session.
+
 ## 2026-10-04 — Settings section divider observation
 
 - **App version:** `0.5.4-dev.1` local debug APK, version code 38.

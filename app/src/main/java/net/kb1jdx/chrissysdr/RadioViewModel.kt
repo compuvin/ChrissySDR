@@ -1058,6 +1058,12 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startReceiver() {
         pendingRxRetune?.cancel(false)
+        if (radioService?.txCleanupBlocking == true) {
+            mutableState.update {
+                it.copy(rxStatus = "RX blocked: TX cleanup is in progress")
+            }
+            return
+        }
         val snapshot = mutableState.value
         val device = selectedDevice
         val format = selectedRxFormat
@@ -1308,6 +1314,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun validateTransmit(): String? {
+        if (radioService?.txCleanupBlocking == true) {
+            return "TX blocked: prior TX cleanup is in progress"
+        }
         val snapshot = mutableState.value
         return TxControlPolicy.unavailableReason(
             snapshot.mode, snapshot.txAvailable, snapshot.txStatus,
@@ -1424,12 +1433,25 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         val resumeReceiver = resumeRxAfterTx
         resumeRxAfterTx = false
         worker.execute {
-            runCatching { radioService?.stopTransmitter() }
-            mutableState.update {
-                it.copy(txActive = false, txBusy = false, txMicrophonePeak = 0.0,
-                    txStatus = message)
+            val stopped = runCatching { radioService?.stopTransmitter() == true }
+                .getOrDefault(false)
+            if (stopped) {
+                mutableState.update {
+                    it.copy(txActive = false, txBusy = false, txMicrophonePeak = 0.0,
+                        txStatus = message)
+                }
+                if (resumeReceiver) startReceiver()
+            } else {
+                val warning = "TX shutdown could not be confirmed. Check radio and server state."
+                mutableState.update {
+                    it.copy(txActive = false, txBusy = false,
+                        txMicrophonePeak = 0.0,
+                        txStatus = warning,
+                        txAttemptError = warning, rxStatus = warning,
+                        recentErrors = (it.recentErrors + warning).takeLast(5))
+                }
+                if (resumeReceiver) startReceiver()
             }
-            if (resumeReceiver) startReceiver()
         }
     }
 

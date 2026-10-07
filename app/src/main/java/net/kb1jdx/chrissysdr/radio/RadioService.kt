@@ -24,6 +24,9 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import com.kb1jdx.chrissysdr.MainActivity
 import com.kb1jdx.chrissysdr.R
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 class RadioService : Service() {
     data class ActiveReceiverSnapshot(
@@ -52,6 +55,9 @@ class RadioService : Service() {
     private var transmitter: RadioTransmitter? = null
     private var receiverConfig: ReceiverConfig? = null
     private var transmitterConfig: TransmitterConfig? = null
+    @Volatile private var txCleanupInProgress: Boolean = false
+    val txCleanupBlocking: Boolean
+        get() = txCleanupInProgress
     private var inspectedDevice: InspectedDevice? = null
     private var lastReceiverStatistics: ReceiverStatistics? = null
     private var lastSpectrum: SpectrumFrame? = null
@@ -176,6 +182,9 @@ class RadioService : Service() {
         onError: (Throwable) -> Unit,
         isCancelled: () -> Boolean = { false },
     ): ReceiverAppliedSettings = synchronized(lock) {
+        check(!txCleanupInProgress) {
+            "RX blocked: TX cleanup is in progress"
+        }
         check(!isCancelled()) { "RX start cancelled" }
         runCatching { receiver?.close() }
         receiver = null
@@ -308,6 +317,9 @@ class RadioService : Service() {
         onStopped: () -> Unit,
         onError: (Throwable) -> Unit,
     ): Double = synchronized(lock) {
+        check(!txCleanupInProgress) {
+            "TX blocked: prior TX cleanup is in progress"
+        }
         runCatching { receiver?.close() }
         receiver = null
         receiverConfig = null
@@ -335,11 +347,12 @@ class RadioService : Service() {
                         if (transmitter === session) {
                             transmitter = null
                             transmitterConfig = null
+                            txCleanupInProgress = true
                             true
                         } else false
                     }
                     if (current) {
-                        runCatching { session.close() }
+                        closeTransmitterBounded(session)
                         notifyState()
                         updateForegroundState()
                         onError(error)
@@ -357,23 +370,52 @@ class RadioService : Service() {
                 transmitter = null
                 transmitterConfig = null
             }
-            runCatching { session.close() }
+            closeTransmitterBounded(session)
             notifyState()
             updateForegroundState()
             throw error
         }
     }
 
-    fun stopTransmitter() {
+    fun stopTransmitter(): Boolean {
         val session = synchronized(lock) {
             val current = transmitter
             transmitter = null
             transmitterConfig = null
+            if (current != null) txCleanupInProgress = true
             current
         }
-        runCatching { session?.close() }
+        val confirmed = if (session == null) !txCleanupInProgress
+            else closeTransmitterBounded(session)
         notifyState()
         updateForegroundState()
+        return confirmed
+    }
+
+    private fun closeTransmitterBounded(session: RadioTransmitter): Boolean {
+        txCleanupInProgress = true
+        val finished = CountDownLatch(1)
+        val error = AtomicReference<Throwable?>(null)
+        Thread({
+            try {
+                session.close()
+            } catch (failure: Throwable) {
+                error.set(failure)
+            } finally {
+                finished.countDown()
+            }
+        }, "ChrissySDR-TX-close").apply { isDaemon = true; start() }
+        val completed = try { finished.await(8, TimeUnit.SECONDS) }
+            catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                false
+            }
+        if (!completed || error.get() != null) {
+            txCleanupInProgress = false
+            return false
+        }
+        txCleanupInProgress = false
+        return true
     }
 
     fun closeAll() {
@@ -384,10 +426,12 @@ class RadioService : Service() {
             transmitter = null
             receiverConfig = null
             transmitterConfig = null
+            if (current.second != null) txCleanupInProgress = true
             current
         }
         runCatching { sessions.first?.close() }
-        runCatching { sessions.second?.close() }
+        sessions.second?.let(::closeTransmitterBounded)
+        runCatching { backend.close() }
         abandonRxAudioFocusIfIdle()
         notifyState()
     }
