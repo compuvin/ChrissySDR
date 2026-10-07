@@ -12,6 +12,36 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-06 — Settings swipe-up close handle
+
+- **App version:** `0.5.4-dev.12` local debug APK, version code 49.
+- **Change:** Add a visible swipe-up close handle at the bottom of the top
+  Settings panel. The header swipe-up and Close button remain available.
+- **Device result:** Pending gesture test on the handset.
+
+## 2026-10-06 — Settings opens from the top
+
+- **App version:** `0.5.4-dev.11` local debug APK, version code 48.
+- **Change:** Settings now slides down from the top, matching its header
+  button. Operating Controls remains a draggable bottom sheet. Settings still
+  scrolls internally and can be dismissed with Close, Back, tapping outside,
+  or swiping up on its header.
+- **Device result:** Operator confirms the top-opening Settings panel fixes the
+  Settings scroll bounce and that the Transmit timeout divider is visible.
+  The header-only close gesture was not apparent in normal use, prompting a
+  visible bottom close handle in dev.12.
+
+## 2026-10-06 — Settings divider and scroll-edge experiment
+
+- **App version:** `0.5.4-dev.10` local debug APK, version code 47.
+- **Change:** Add a divider before Transmit timeout (#2). Disable the visual
+  overscroll effect in Settings and Operating Controls (#4) while retaining
+  normal sheet up/down drag gestures. This replaces the rejected dev.9
+  experiment that disabled sheet dragging.
+- **Device result:** Operator reports that Settings still loops/bounces at the
+  bottom in dev.10. Disabling the visual overscroll effect was insufficient.
+  Divider and Operating Controls behavior were not separately reported.
+
 ## 2026-10-05 — Shared SoapyRemote device handoff
 
 - **App version:** `0.5.4-dev.5` local debug APK, version code 42.

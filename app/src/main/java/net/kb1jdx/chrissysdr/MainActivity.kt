@@ -16,9 +16,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -86,6 +91,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kb1jdx.chrissysdr.radio.RadioService
 import kotlin.math.log10
@@ -341,13 +348,12 @@ private fun RadioScreen(
         }
     }
 
-    if (activeSheet != null) {
+    if (activeSheet == RadioSheet.OPERATING) {
         ModalBottomSheet(
             onDismissRequest = { activeSheet = null },
             containerColor = RadioPanel,
         ) {
-            when (activeSheet) {
-                RadioSheet.OPERATING -> OperatingControlsSheet(
+            OperatingControlsSheet(
                     state = state,
                     onFrequencyChanged = onFrequencyChanged,
                     onStepFrequency = onStepFrequency,
@@ -361,7 +367,11 @@ private fun RadioScreen(
                     onStartRx = onStartRx,
                     onStopRx = onStopRx,
                 )
-                RadioSheet.SETTINGS -> SettingsSheet(
+        }
+    }
+    if (activeSheet == RadioSheet.SETTINGS) {
+        TopSettingsDialog(onDismiss = { activeSheet = null }) {
+            SettingsSheet(
                     state = state,
                     version = version,
                     onHostChanged = onHostChanged,
@@ -383,14 +393,87 @@ private fun RadioScreen(
                         activeSheet = null
                     },
                 )
-                null -> Unit
-            }
         }
     }
 
 }
 
 private enum class RadioSheet { OPERATING, SETTINGS }
+
+@Composable
+private fun TopSettingsDialog(onDismiss: () -> Unit, content: @Composable () -> Unit) {
+    var visible by remember { mutableStateOf(false) }
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true; visible = true }
+    LaunchedEffect(visible) {
+        if (entered && !visible) {
+            delay(220)
+            onDismiss()
+        }
+    }
+    Dialog(
+        onDismissRequest = { visible = false },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            AnimatedVisibility(
+                visible = visible,
+                enter = slideInVertically(animationSpec = tween(220)) { -it },
+                exit = slideOutVertically(animationSpec = tween(220)) { -it },
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().fillMaxHeight(0.9f),
+                    shape = RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp),
+                    color = RadioPanel,
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().pointerInput(Unit) {
+                                var dragDistance = 0f
+                                detectVerticalDragGestures(
+                                    onVerticalDrag = { _, amount -> dragDistance += amount },
+                                    onDragEnd = {
+                                        if (dragDistance < -80.dp.toPx()) visible = false
+                                        dragDistance = 0f
+                                    },
+                                    onDragCancel = { dragDistance = 0f },
+                                )
+                            }.padding(horizontal = 20.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Settings", fontWeight = FontWeight.Bold)
+                            TextButton(onClick = { visible = false }) { Text("Close") }
+                        }
+                        Box(Modifier.weight(1f)) { content() }
+                        Column(
+                            modifier = Modifier.fillMaxWidth().height(48.dp)
+                                .pointerInput(Unit) {
+                                    var dragDistance = 0f
+                                    detectVerticalDragGestures(
+                                        onVerticalDrag = { _, amount -> dragDistance += amount },
+                                        onDragEnd = {
+                                            if (dragDistance < -48.dp.toPx()) visible = false
+                                            dragDistance = 0f
+                                        },
+                                        onDragCancel = { dragDistance = 0f },
+                                    )
+                                }.semantics { contentDescription = "Swipe up to close Settings" },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Spacer(Modifier.width(44.dp).height(4.dp)
+                                .background(MaterialTheme.colorScheme.onSurfaceVariant,
+                                    RoundedCornerShape(2.dp)))
+                            Text("Swipe up to close", fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun TransmitDisplay(modifier: Modifier, state: RadioUiState) {
@@ -826,7 +909,7 @@ private fun OperatingControlsSheet(
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().fillMaxHeight(0.75f)
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(rememberScrollState(), overscrollEffect = null)
             .padding(horizontal = 20.dp, vertical = 8.dp),
     ) {
         Text("Operating controls", fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -1056,8 +1139,8 @@ private fun SettingsSheet(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .fillMaxHeight(0.9f)
-            .verticalScroll(rememberScrollState())
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState(), overscrollEffect = null)
             .padding(horizontal = 20.dp, vertical = 8.dp),
     ) {
         Text("Settings", fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -1178,6 +1261,7 @@ private fun SettingsSheet(
                 }
             }
         }
+        HorizontalDivider(Modifier.padding(vertical = 16.dp))
         Text("Transmit timeout", fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Text("Automatically stops TX if it remains keyed.", fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
