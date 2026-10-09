@@ -5,17 +5,20 @@ class AmReceivePipeline(
     private val inputSampleRate: Double,
     private val outputSampleRate: Int,
     private val passbandHz: Double = 6_000.0,
-) {
+) : ReceiveAudioPipeline {
     init { require(passbandHz.isFinite() && passbandHz > 0.0) }
     private val resampler = ComplexPolyphaseResampler(inputSampleRate, outputSampleRate.toDouble(), passbandHz)
     private val demodulator = AmDemodulator(
         sampleRate = outputSampleRate.toDouble(),
         cutoffHz = minOf(passbandHz / 2.0, outputSampleRate * 0.4),
     )
+    override var lastSignalPower: Double = 0.0
+        private set
 
-    fun process(iq: FloatArray, elements: Int = iq.size / 2): ShortArray {
+    override fun process(iq: FloatArray, elements: Int): ShortArray {
         require(elements * 2 <= iq.size)
         val baseband = resampler.process(iq, elements)
+        lastSignalPower = meanComplexPower(baseband)
         val output = ShortArray(baseband.size / 2)
         repeat(output.size) { index ->
             val audio = demodulator.process(

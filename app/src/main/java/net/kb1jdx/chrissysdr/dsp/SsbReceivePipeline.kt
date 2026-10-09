@@ -7,17 +7,20 @@ class SsbReceivePipeline(
     passbandHz: Double,
     upperSideband: Boolean,
     bfoOffsetHz: Double = 0.0,
-) {
+) : ReceiveAudioPipeline {
     private val resampler = ComplexPolyphaseResampler(
         inputSampleRate, outputSampleRate.toDouble(), passbandHz * 2.0,
     )
     private val detector = SsbDemodulator(
         outputSampleRate.toDouble(), upperSideband, passbandHz, bfoOffsetHz,
     )
+    override var lastSignalPower: Double = 0.0
+        private set
 
-    fun process(iq: FloatArray, elements: Int = iq.size / 2): ShortArray {
+    override fun process(iq: FloatArray, elements: Int): ShortArray {
         require(elements >= 0 && elements * 2 <= iq.size)
         val baseband = resampler.process(iq, elements)
+        lastSignalPower = meanComplexPower(baseband)
         return ShortArray(baseband.size / 2) { index ->
             val audio = detector.process(
                 baseband[index * 2].toDouble(), baseband[index * 2 + 1].toDouble(),

@@ -88,7 +88,7 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 - [ ] Use tap-to-latch PTT with:
   - [x] A separate explicit TX-armed state.
   - [x] Strong visual and audible transitions into and out of transmit.
-  - [ ] A default three-minute timeout configurable to 30 seconds, 1, 3, 5, or 10 minutes.
+  - [x] A default three-minute timeout configurable to 30 seconds, 1, 3, 5, or 10 minutes.
   - [ ] Immediate unkey on timeout, disconnect, stream failure, service shutdown, audio-recording failure, or application fault.
   - [x] No automatic return to transmit after reconnect or restart.
 - [x] Request microphone permission when a radio becomes TX-ready, before the first transmit attempt.
@@ -102,12 +102,15 @@ After safe Soapy TX:
 - [ ] Saved frequencies, named stations/channels, and band presets.
 - [ ] Quick QSO log entry for recording a contact on the go; not a replacement for a full logging program.
 - [ ] Waterfall display.
+- [ ] Adjustable lower and upper receive-audio filter edges beyond the current passband-width control.
+- [ ] Receive noise blanker for short electrical clicks and pulses.
+- [ ] Receive notch filter for persistent tones and whistles.
 - [ ] CW receive and additional digital-mode plumbing.
 - [ ] Direct proprietary flex1500d backend behind `RadioBackend`.
 - [ ] Additional screen sizes/orientations, external PTT controls, and broader hardware validation.
 - [ ] Public-release work such as signing, accessibility review, privacy documentation, and store compliance.
 - [ ] Repeater options - +/- offset, PL tone
-- [ ] Squelch for FM mode
+- [x] Squelch for FM mode
 
 ## Core Interfaces and Data Flow
 

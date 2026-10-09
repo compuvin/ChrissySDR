@@ -82,6 +82,8 @@ data class ReceiverConfig(
     val mode: String = "AM",
     val nfmAudioCutoffHz: Double = 3_000.0,
     val nfmDeemphasisUs: Int = 75,
+    val squelchThresholdDbfs: Double? = null,
+    val noiseReductionLevel: Int = 0,
     val rxGains: Map<String, Double> = emptyMap(),
     val rxAntenna: String? = null,
     val rxHardwareAgc: Boolean? = null,
@@ -94,6 +96,8 @@ data class ReceiverDspSettings(
     val nfmAudioCutoffHz: Double,
     val nfmDeemphasisUs: Int,
     val hardwareBandwidthHz: Double?,
+    val squelchThresholdDbfs: Double? = null,
+    val noiseReductionLevel: Int = 0,
 )
 
 data class TransmitterConfig(

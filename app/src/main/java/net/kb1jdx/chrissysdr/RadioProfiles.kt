@@ -30,6 +30,8 @@ data class RadioProfile(
     val rxGains: Map<String, Double> = emptyMap(),
     val rxHardwareAgc: Boolean? = null,
     val rxAntenna: String? = null,
+    val squelchThresholdsDbfs: Map<String, Double> = emptyMap(),
+    val noiseReductionLevels: Map<String, Int> = emptyMap(),
 )
 
 @Entity(tableName = "radio_profiles")
@@ -47,6 +49,8 @@ data class RadioProfileEntity(
     @ColumnInfo(defaultValue = "'{}'") val rxGainsJson: String,
     val rxHardwareAgc: Boolean?,
     val rxAntenna: String?,
+    @ColumnInfo(defaultValue = "'{}'") val squelchThresholdsJson: String = "{}",
+    @ColumnInfo(defaultValue = "'{}'") val noiseReductionLevelsJson: String = "{}",
 )
 
 @Dao
@@ -62,7 +66,7 @@ interface RadioProfileDao {
 
 }
 
-@Database(entities = [RadioProfileEntity::class], version = 3, exportSchema = true)
+@Database(entities = [RadioProfileEntity::class], version = 5, exportSchema = true)
 abstract class ChrissyDatabase : RoomDatabase() {
     abstract fun radioProfiles(): RadioProfileDao
 
@@ -80,13 +84,24 @@ abstract class ChrissyDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE radio_profiles ADD COLUMN rxAntenna TEXT")
             }
         }
+        private val migration3To4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE radio_profiles ADD COLUMN squelchThresholdsJson TEXT NOT NULL DEFAULT '{}'")
+            }
+        }
+        private val migration4To5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE radio_profiles ADD COLUMN noiseReductionLevelsJson TEXT NOT NULL DEFAULT '{}'")
+            }
+        }
 
         fun get(context: Context): ChrissyDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 ChrissyDatabase::class.java,
                 "chrissysdr.db",
-            ).addMigrations(migration1To2, migration2To3).build().also { instance = it }
+            ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5)
+                .build().also { instance = it }
         }
     }
 }
@@ -105,11 +120,15 @@ fun RadioProfile.toEntity() = RadioProfileEntity(
     rxGainsJson = JSONObject(rxGains).toString(),
     rxHardwareAgc = rxHardwareAgc,
     rxAntenna = rxAntenna,
+    squelchThresholdsJson = JSONObject(squelchThresholdsDbfs).toString(),
+    noiseReductionLevelsJson = JSONObject(noiseReductionLevels).toString(),
 )
 
 fun RadioProfileEntity.toProfile(): RadioProfile {
     val json = JSONObject(deviceArgumentsJson)
     val gains = JSONObject(rxGainsJson)
+    val squelch = JSONObject(squelchThresholdsJson)
+    val noiseReduction = JSONObject(noiseReductionLevelsJson)
     return RadioProfile(
         id = id,
         name = name,
@@ -124,6 +143,16 @@ fun RadioProfileEntity.toProfile(): RadioProfile {
         rxGains = gains.keys().asSequence().associateWith { gains.getDouble(it) },
         rxHardwareAgc = rxHardwareAgc,
         rxAntenna = rxAntenna,
+        squelchThresholdsDbfs = squelch.keys().asSequence().mapNotNull { mode ->
+            val value = squelch.optDouble(mode, Double.NaN)
+            if (mode in setOf("AM", "NFM", "USB", "LSB") && value.isFinite() &&
+                value in -120.0..0.0) mode to value else null
+        }.toMap(),
+        noiseReductionLevels = noiseReduction.keys().asSequence().mapNotNull { mode ->
+            val value = noiseReduction.optInt(mode, -1)
+            if (mode in setOf("AM", "NFM", "USB", "LSB") && value in 1..2)
+                mode to value else null
+        }.toMap(),
     )
 }
 

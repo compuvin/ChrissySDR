@@ -189,6 +189,8 @@ class MainActivity : ComponentActivity() {
                     onModeChanged = radio::setMode,
                     onNfmAudioCutoffChanged = radio::setNfmAudioCutoff,
                     onNfmDeemphasisChanged = radio::setNfmDeemphasis,
+                    onSquelchThresholdChanged = radio::setSquelchThresholdDbfs,
+                    onNoiseReductionChanged = radio::setNoiseReductionLevel,
                     onSampleRateChanged = radio::selectSampleRate,
                     onSpectrumAveragingChanged = radio::setSpectrumAveraging,
                     onSpectrumFloorChanged = radio::setSpectrumFloorDb,
@@ -270,6 +272,8 @@ private fun RadioScreen(
     onModeChanged: (String) -> Unit,
     onNfmAudioCutoffChanged: (Double) -> Unit,
     onNfmDeemphasisChanged: (Int) -> Unit,
+    onSquelchThresholdChanged: (Double?) -> Unit,
+    onNoiseReductionChanged: (Int) -> Unit,
     onSampleRateChanged: (Double?) -> Unit,
     onSpectrumAveragingChanged: (Float) -> Unit,
     onSpectrumFloorChanged: (Int) -> Unit,
@@ -361,6 +365,8 @@ private fun RadioScreen(
                     onModeChanged = onModeChanged,
                     onNfmAudioCutoffChanged = onNfmAudioCutoffChanged,
                     onNfmDeemphasisChanged = onNfmDeemphasisChanged,
+                    onSquelchThresholdChanged = onSquelchThresholdChanged,
+                    onNoiseReductionChanged = onNoiseReductionChanged,
                     onTuningStepChanged = onTuningStepChanged,
                     onRxGainChanged = onRxGainChanged,
                     onRxHardwareAgcChanged = onRxHardwareAgcChanged,
@@ -899,6 +905,8 @@ private fun OperatingControlsSheet(
     onModeChanged: (String) -> Unit,
     onNfmAudioCutoffChanged: (Double) -> Unit,
     onNfmDeemphasisChanged: (Int) -> Unit,
+    onSquelchThresholdChanged: (Double?) -> Unit,
+    onNoiseReductionChanged: (Int) -> Unit,
     onTuningStepChanged: (Double) -> Unit,
     onRxGainChanged: (String, Double) -> Unit,
     onRxHardwareAgcChanged: (Boolean) -> Unit,
@@ -1019,6 +1027,51 @@ private fun OperatingControlsSheet(
                             )
                         }
                     }
+                }
+            }
+        }
+        val squelchThreshold = state.squelchThresholdsDbfs[state.mode]
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Squelch", modifier = Modifier.weight(1f))
+            Switch(
+                checked = squelchThreshold != null,
+                onCheckedChange = { enabled ->
+                    onSquelchThresholdChanged(if (enabled) -50.0 else null)
+                },
+                enabled = !state.rxBusy && !state.txActive && !state.txBusy,
+            )
+        }
+        if (squelchThreshold != null) {
+            var draft by remember(state.mode, squelchThreshold) {
+                mutableStateOf(squelchThreshold.toFloat())
+            }
+            Text("Threshold: ${draft.toInt()} dBFS", fontSize = 13.sp)
+            Slider(
+                value = draft.coerceIn(-120f, 0f),
+                onValueChange = { draft = it },
+                onValueChangeFinished = { onSquelchThresholdChanged(draft.toInt().toDouble()) },
+                valueRange = -120f..0f,
+                steps = 119,
+                enabled = !state.rxBusy && !state.txActive && !state.txBusy,
+            )
+            Text("Mutes weak signals; save the radio profile to keep this setting.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        var noiseReductionExpanded by remember { mutableStateOf(false) }
+        Box(Modifier.fillMaxWidth()) {
+            val reduction = state.noiseReductionLevels[state.mode] ?: 0
+            OutlinedButton(
+                onClick = { noiseReductionExpanded = true },
+                enabled = !state.rxBusy && !state.txActive && !state.txBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Noise reduction: ${listOf("Off", "Light", "Strong")[reduction]}") }
+            DropdownMenu(noiseReductionExpanded,
+                onDismissRequest = { noiseReductionExpanded = false }) {
+                listOf("Off", "Light", "Strong").forEachIndexed { level, label ->
+                    DropdownMenuItem(text = { Text(label) }, onClick = {
+                        onNoiseReductionChanged(level)
+                        noiseReductionExpanded = false
+                    })
                 }
             }
         }

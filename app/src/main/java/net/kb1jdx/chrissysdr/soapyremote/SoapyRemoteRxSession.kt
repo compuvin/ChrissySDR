@@ -4,11 +4,15 @@ import com.kb1jdx.chrissysdr.audio.AndroidAudioOutput
 import com.kb1jdx.chrissysdr.dsp.AmReceivePipeline
 import com.kb1jdx.chrissysdr.dsp.SsbReceivePipeline
 import com.kb1jdx.chrissysdr.dsp.NfmReceivePipeline
+import com.kb1jdx.chrissysdr.dsp.ReceiveAudioPipeline
+import com.kb1jdx.chrissysdr.dsp.SignalPowerSquelch
 import com.kb1jdx.chrissysdr.dsp.SpectrumAnalyzer
 import com.kb1jdx.chrissysdr.dsp.ComplexPolyphaseResampler
 import com.kb1jdx.chrissysdr.radio.SoapyStreamException
 import com.kb1jdx.chrissysdr.radio.RadioOpenCancellation
 import com.kb1jdx.chrissysdr.radio.ReceiverDspSettings
+import com.kb1jdx.chrissysdr.dsp.SpectralNoiseReducer
+import com.kb1jdx.chrissysdr.dsp.AudioNoiseReducer
 import com.kb1jdx.chrissysdr.radio.SpectrumPolicy
 import com.kb1jdx.chrissysdr.radio.SpectrumResolutionPolicy
 import java.io.DataInputStream
@@ -82,6 +86,10 @@ class SoapyRemoteRxSession private constructor(
         require(settings.passbandHz.isFinite() && settings.passbandHz > 0.0)
         require(settings.nfmAudioCutoffHz in listOf(2_500.0, 3_000.0, 4_000.0))
         require(settings.nfmDeemphasisUs in listOf(0, 50, 75))
+        require(settings.squelchThresholdDbfs == null ||
+            settings.squelchThresholdDbfs.isFinite() &&
+            settings.squelchThresholdDbfs in -120.0..0.0)
+        require(settings.noiseReductionLevel in 0..2)
         val centeredWidth = if (settings.mode == "USB" || settings.mode == "LSB")
             settings.passbandHz * 2.0 else settings.passbandHz
         require(inputSampleRate >= centeredWidth * 1.25) {
@@ -163,19 +171,27 @@ class SoapyRemoteRxSession private constructor(
         try {
             val input = DataInputStream(stream.getInputStream())
             val output = stream.getOutputStream()
-            fun audioPipeline(settings: ReceiverDspSettings): (FloatArray, Int) -> ShortArray =
+            fun audioPipeline(settings: ReceiverDspSettings): ReceiveAudioPipeline =
                 when (settings.mode) {
-                    "AM" -> AmReceivePipeline(inputSampleRate, audioSampleRate, settings.passbandHz)::process
+                    "AM" -> AmReceivePipeline(inputSampleRate, audioSampleRate, settings.passbandHz)
                     "USB", "LSB" -> SsbReceivePipeline(inputSampleRate, audioSampleRate,
-                        settings.passbandHz, settings.mode == "USB")::process
+                        settings.passbandHz, settings.mode == "USB")
                     "NFM" -> NfmReceivePipeline(inputSampleRate, audioSampleRate,
                         settings.passbandHz, settings.nfmAudioCutoffHz,
-                        settings.nfmDeemphasisUs)::process
+                        settings.nfmDeemphasisUs)
                     else -> error("Unsupported RX mode ${settings.mode}")
                 }
             var pipelineSettings = dspSettings
             var pipeline = audioPipeline(pipelineSettings)
-            while (running.get()) {
+            val squelch = SignalPowerSquelch(audioSampleRate)
+            fun noiseReducer(level: Int): AudioNoiseReducer? = when (level) {
+                0 -> null
+                1, 2 -> SpectralNoiseReducer(level)
+                else -> error("Unsupported noise reduction level $level")
+            }
+            var activeNoiseReducer = noiseReducer(pipelineSettings.noiseReductionLevel)
+            try {
+                while (running.get()) {
                 try {
                     val bytes = input.readInt()
                     val sequence = input.readInt().toLong() and 0xffff_ffffL
@@ -206,10 +222,24 @@ class SoapyRemoteRxSession private constructor(
                     }
                     val updatedSettings = dspSettings
                     if (updatedSettings !== pipelineSettings) {
+                        val previousSettings = pipelineSettings
+                        val previousNoiseLevel = pipelineSettings.noiseReductionLevel
                         pipelineSettings = updatedSettings
-                        pipeline = audioPipeline(updatedSettings)
+                        if (updatedSettings.mode != previousSettings.mode ||
+                            updatedSettings.passbandHz != previousSettings.passbandHz ||
+                            updatedSettings.nfmAudioCutoffHz != previousSettings.nfmAudioCutoffHz ||
+                            updatedSettings.nfmDeemphasisUs != previousSettings.nfmDeemphasisUs
+                        ) pipeline = audioPipeline(updatedSettings)
+                        if (updatedSettings.noiseReductionLevel !=
+                            previousNoiseLevel) {
+                            activeNoiseReducer?.close()
+                            activeNoiseReducer = noiseReducer(updatedSettings.noiseReductionLevel)
+                        }
                     }
-                    val audio = pipeline(iq, elements)
+                    val audio = pipeline.process(iq, elements)
+                    squelch.processInPlace(audio, pipeline.lastSignalPower,
+                        pipelineSettings.squelchThresholdDbfs)
+                    activeNoiseReducer?.processInPlace(audio)
                     audioOutput?.write(audio, audio.size)
                         ?: error("Android audio output is closed")
                     val spectrumIq = spectrumResampler?.process(iq, elements) ?: iq
@@ -255,6 +285,9 @@ class SoapyRemoteRxSession private constructor(
                     }
                     drainStatusErrors()
                 }
+                }
+            } finally {
+                activeNoiseReducer?.close()
             }
         } catch (error: Throwable) {
             if (running.get()) {
@@ -336,6 +369,8 @@ class SoapyRemoteRxSession private constructor(
             mode: String,
             nfmAudioCutoffHz: Double,
             nfmDeemphasisUs: Int,
+            squelchThresholdDbfs: Double?,
+            noiseReductionLevel: Int,
             rxGains: Map<String, Double>,
             rxAntenna: String?,
             rxHardwareAgc: Boolean?,
@@ -352,6 +387,11 @@ class SoapyRemoteRxSession private constructor(
                 "Unsupported NFM audio cutoff"
             }
             require(nfmDeemphasisUs in listOf(0, 50, 75)) { "Unsupported NFM deemphasis" }
+            require(squelchThresholdDbfs == null ||
+                squelchThresholdDbfs.isFinite() && squelchThresholdDbfs in -120.0..0.0) {
+                "Invalid squelch threshold"
+            }
+            require(noiseReductionLevel in 0..2)
             var stream: Socket? = null
             var status: Socket? = null
             var streamId: Int? = null
@@ -442,7 +482,8 @@ class SoapyRemoteRxSession private constructor(
                     appliedHardwareBandwidth,
                     SpectrumPolicy.displayRate(appliedSampleRate), format, fullScale,
                     frequencyHz, ReceiverDspSettings(mode, bandwidthHz,
-                        nfmAudioCutoffHz, nfmDeemphasisUs, hardwareBandwidthHz),
+                        nfmAudioCutoffHz, nfmDeemphasisUs, hardwareBandwidthHz,
+                        squelchThresholdDbfs, noiseReductionLevel),
                     spectrumSpanHz,
                 )
             } catch (error: Throwable) {

@@ -1,5 +1,6 @@
 package com.kb1jdx.chrissysdr.radio
 
+
 import com.kb1jdx.chrissysdr.soapyremote.SoapyChannelCapabilities
 import com.kb1jdx.chrissysdr.soapyremote.SoapyArgInfo
 import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteClient
@@ -95,6 +96,8 @@ class SoapyRemoteBackend(
             config.mode,
             config.nfmAudioCutoffHz,
             config.nfmDeemphasisUs,
+            config.squelchThresholdDbfs,
+            config.noiseReductionLevel,
             config.rxGains,
             config.rxAntenna,
             config.rxHardwareAgc,

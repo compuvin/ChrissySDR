@@ -12,6 +12,76 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-08 — RNNoise 0.2 and Android DeepFilterNet comparison
+
+- **App version:** `0.5.4-dev.19` local debug APK, version code 56.
+- **Scope:** Upgrade the optional RNNoise choice to v0.2 and
+  add Android DeepFilterNet 0.0.8 as a separate receive-noise-reduction choice.
+  DeepFilterNet attenuation can be adjusted from 0 to 40 dB in Operating
+  Controls and retained by Save Profile. Both choices remain off by default.
+- **Device result:** Operator tested both and found neither beneficial enough
+  to keep. Both are removed in dev.21; the non-AI Light and Strong choices stay.
+- **Adjustment in dev.20:** Test RNNoise 0.2 at its native, full-strength output
+  with no dry-audio blend, per operator request. This is a separate local APK
+  (version code 57). The full-strength test was included in the decision to
+  remove RNNoise.
+
+## 2026-10-08 — Optional AI speech-noise reduction
+
+- **App version:** `0.5.4-dev.17` local debug APK, version code 54.
+- **Scope:** Add RNNoise v0.1.1 as an optional AI speech-noise-reduction
+  choice for receive audio. Off remains the default; Light and Strong retain
+  the existing non-AI processor. Settings includes RNNoise attribution and its
+  license text. The model's release provenance still needs review.
+- **Device result:** Operator reports RNNoise removes static but also removes
+  much of the voice, even on a strong signal. This is not acceptable as-is.
+  Compare a reduced wet/dry mix or a different model before retaining it;
+  remove the option if intelligibility does not improve.
+- **Adjustment in dev.18:** Mix 25% RNNoise output with 75% original audio,
+  aligning both paths to the same frame delay. Operator reports it sounds about
+  the same as the existing Light setting, with no clear benefit. Another model
+  may be evaluated before removing the AI option.
+
+## 2026-10-08 — FLEX-6700 via SoapyFlex6000
+
+- **Hardware and transport:** FLEX-6700 through the operator's
+  [SoapyFlex6000 driver](https://github.com/compuvin/SoapyFlex6000) and
+  SoapyRemote. App version, mode, frequency, and sample rate were not recorded.
+- **Integration result:** Operator successfully tested ChrissySDR with this
+  radio; receive-mode details were not supplied.
+- **TX safety test A:** The driver did not report TX frequency ranges. A normal
+  TX attempt was refused with an unsupported/unavailable message, as expected
+  when the app cannot verify the hardware's TX limits.
+- **TX safety test B:** The operator enabled the per-radio unknown-TX-range
+  override, acknowledged its warning, and successfully transmitted.
+- **Follow-up:** Record mode, frequency, and stream details if a later test is
+  needed; these were not supplied for this result.
+
+## 2026-10-08 — Receive-audio noise reduction
+
+- **App version:** `0.5.4-dev.15` local debug APK, version code 52.
+- **Scope:** Per-mode Off, Light, or Strong spectral noise reduction for AM,
+  NFM, USB, and LSB. Off is the default and bypasses the processing. The
+  setting can be changed during RX and is retained by Save Profile in Room.
+- **Device result:** Operator reports dev.15 reduction is subtle and appears
+  to lower voice more than static. Further squelch testing is still planned.
+- **Adjustment in dev.16:** Better protection of narrow voice components and
+  stronger attenuation of stationary broadband noise. Operator reports that
+  noise reduction works much better. More listening tests across modes and
+  weak-signal conditions are still worthwhile.
+
+## 2026-10-08 — Receive-side software squelch
+
+- **App version:** `0.5.4-dev.14` local debug APK, version code 51.
+- **Scope:** Software squelch is available in AM, NFM, USB, and LSB. It gates
+  receive audio using channel-filtered IQ power before demodulator AGC, with
+  threshold hysteresis, a short hang time, and smooth fades. Operating
+  Controls offers Off and a mode-specific dBFS threshold; explicit Save Profile
+  persists those settings in Room. The radio driver's squelch is unchanged.
+- **Device result:** Operator reports squelch seems to work, with more testing
+  planned. The FM squelch roadmap item was checked off at the operator's
+  request; weak-signal behavior and profile save/reload still need testing.
+
 ## 2026-10-06 — Notification-return spectrum smoothing
 
 - **App version:** `0.5.4-dev.13` local debug APK, version code 50.

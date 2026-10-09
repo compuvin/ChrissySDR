@@ -58,6 +58,8 @@ data class RadioUiState(
     val mode: String = "AM",
     val nfmAudioCutoffHz: Double = 3_000.0,
     val nfmDeemphasisUs: Int = 75,
+    val squelchThresholdsDbfs: Map<String, Double> = emptyMap(),
+    val noiseReductionLevels: Map<String, Int> = emptyMap(),
     val connectionStatus: String = "Not connected",
     val connectionState: RadioConnectionState = RadioConnectionState.DISCONNECTED,
     val lastError: RadioFailure? = null,
@@ -193,6 +195,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             rxHardwareAgc = (rxHardwareAgcOverride ?: snapshot.rxHardwareAgc)
                 .takeIf { snapshot.rxHardwareAgcSupported },
             rxAntenna = rxAntennaOverride ?: snapshot.rxAntenna,
+            squelchThresholdsDbfs = snapshot.squelchThresholdsDbfs,
+            noiseReductionLevels = snapshot.noiseReductionLevels,
         )
         mutableState.update { it.copy(savingProfile = true, profileStatus = "Saving ${profile.name}…") }
         worker.execute {
@@ -231,6 +235,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         host = profile.host, port = profile.port.toString(),
                         frequency = profile.frequency, bandwidth = profile.bandwidth,
                         mode = profile.mode,
+                        squelchThresholdsDbfs = profile.squelchThresholdsDbfs,
+                        noiseReductionLevels = profile.noiseReductionLevels,
                         txAttemptError = null,
                         devices = emptyList(), deviceDetails = "", additionalDeviceDetails = "",
                         connectionState = RadioConnectionState.CONNECTING,
@@ -380,6 +386,12 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 mode = config.mode,
                 nfmAudioCutoffHz = config.nfmAudioCutoffHz,
                 nfmDeemphasisUs = config.nfmDeemphasisUs,
+                squelchThresholdsDbfs = config.squelchThresholdDbfs?.let {
+                    mapOf(config.mode to it)
+                } ?: it.squelchThresholdsDbfs,
+                noiseReductionLevels = if (config.noiseReductionLevel > 0)
+                    it.noiseReductionLevels + (config.mode to config.noiseReductionLevel)
+                else it.noiseReductionLevels - config.mode,
             )
         }
         active.deviceInfo?.let { info ->
@@ -596,6 +608,29 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         if (snapshot.rxActive) scheduleRxDspUpdate()
     }
 
+    fun setSquelchThresholdDbfs(value: Double?) {
+        val snapshot = mutableState.value
+        if (snapshot.rxBusy || snapshot.txActive || snapshot.txBusy ||
+            snapshot.mode !in setOf("AM", "NFM", "USB", "LSB") ||
+            value != null && (!value.isFinite() || value !in -120.0..0.0)
+        ) return
+        val thresholds = snapshot.squelchThresholdsDbfs.toMutableMap()
+        if (value == null) thresholds.remove(snapshot.mode)
+        else thresholds[snapshot.mode] = value
+        mutableState.update { it.copy(squelchThresholdsDbfs = thresholds) }
+        if (snapshot.rxActive) scheduleRxDspUpdate()
+    }
+
+    fun setNoiseReductionLevel(level: Int) {
+        val snapshot = mutableState.value
+        if (level !in 0..2 || snapshot.rxBusy || snapshot.txActive || snapshot.txBusy ||
+            snapshot.mode !in setOf("AM", "NFM", "USB", "LSB")) return
+        val levels = snapshot.noiseReductionLevels.toMutableMap()
+        if (level == 0) levels.remove(snapshot.mode) else levels[snapshot.mode] = level
+        mutableState.update { it.copy(noiseReductionLevels = levels) }
+        if (snapshot.rxActive) scheduleRxDspUpdate()
+    }
+
     fun setBandwidth(value: String) {
         if (mutableState.value.txActive || mutableState.value.txBusy) return
         pendingRxRetune?.cancel(false)
@@ -657,6 +692,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 val settings = ReceiverDspSettings(
                     current.mode, passband, current.nfmAudioCutoffHz,
                     current.nfmDeemphasisUs, hardwareBandwidth,
+                    current.squelchThresholdsDbfs[current.mode],
+                    current.noiseReductionLevels[current.mode] ?: 0,
                 )
                 runCatching { service.reconfigureReceiver(settings) }
                     .onSuccess { appliedBandwidth ->
@@ -1115,6 +1152,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             mode = snapshot.mode,
             nfmAudioCutoffHz = snapshot.nfmAudioCutoffHz,
             nfmDeemphasisUs = snapshot.nfmDeemphasisUs,
+            squelchThresholdDbfs = snapshot.squelchThresholdsDbfs[snapshot.mode],
+            noiseReductionLevel = snapshot.noiseReductionLevels[snapshot.mode] ?: 0,
             hardwareBandwidthHz = hardwareBandwidth,
             sampleRate = sampleRate,
             format = format.format,

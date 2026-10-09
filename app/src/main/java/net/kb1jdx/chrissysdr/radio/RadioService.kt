@@ -286,6 +286,8 @@ class RadioService : Service() {
                 bandwidthHz = settings.passbandHz,
                 nfmAudioCutoffHz = settings.nfmAudioCutoffHz,
                 nfmDeemphasisUs = settings.nfmDeemphasisUs,
+                squelchThresholdDbfs = settings.squelchThresholdDbfs,
+                noiseReductionLevel = settings.noiseReductionLevel,
                 hardwareBandwidthHz = settings.hardwareBandwidthHz,
             )
             value
