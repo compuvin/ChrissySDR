@@ -1,6 +1,7 @@
 package com.kb1jdx.chrissysdr
 
 import android.Manifest
+import android.app.DatePickerDialog
 import android.content.ComponentName
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -99,6 +100,11 @@ import kotlin.math.log10
 import com.kb1jdx.chrissysdr.radio.RadioConnectionState
 import com.kb1jdx.chrissysdr.radio.SpectrumPolicy
 import kotlinx.coroutines.delay
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private val radio: RadioViewModel by viewModels()
@@ -216,6 +222,9 @@ class MainActivity : ComponentActivity() {
                     onInspect = radio::inspect,
                     onProfileNameChanged = radio::setProfileName,
                     onSaveProfile = radio::saveRadioProfile,
+                    onDeleteProfile = radio::deleteRadioProfile,
+                    onLogQso = radio::logQso,
+                    onDeleteQso = radio::deleteQso,
                     onLoadProfile = { id ->
                         if (Build.VERSION.SDK_INT >= 37 &&
                             checkSelfPermission(LOCAL_NETWORK_PERMISSION) !=
@@ -290,6 +299,9 @@ private fun RadioScreen(
     onInspect: (RadioDeviceChoice) -> Unit,
     onProfileNameChanged: (String) -> Unit,
     onSaveProfile: () -> Unit,
+    onDeleteProfile: (String) -> Unit,
+    onLogQso: (String, String, (String?) -> Unit) -> Unit,
+    onDeleteQso: (Long) -> Unit,
     onLoadProfile: (String) -> Unit,
     onStartRx: () -> Unit,
     onStopRx: () -> Unit,
@@ -297,6 +309,7 @@ private fun RadioScreen(
 ) {
     var activeSheet by rememberSaveable { mutableStateOf<RadioSheet?>(null) }
     var quickConnectExpanded by remember { mutableStateOf(false) }
+    var showQuickQso by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = RadioBackground,
         topBar = {
@@ -313,6 +326,7 @@ private fun RadioScreen(
                     onLoadProfile(id)
                 },
                 onSettings = { activeSheet = RadioSheet.SETTINGS },
+                onQuickQso = { showQuickQso = true },
             )
         },
         bottomBar = {
@@ -394,12 +408,23 @@ private fun RadioScreen(
                     onInspect = onInspect,
                     onProfileNameChanged = onProfileNameChanged,
                     onSaveProfile = onSaveProfile,
+                    onDeleteProfile = onDeleteProfile,
+                    onDeleteQso = onDeleteQso,
                     onLoadProfile = { id ->
                         onLoadProfile(id)
                         activeSheet = null
                     },
                 )
         }
+    }
+
+    if (showQuickQso) {
+        QuickQsoDialog(
+            frequencyHz = state.frequency.toDoubleOrNull(),
+            mode = state.mode,
+            onDismiss = { showQuickQso = false },
+            onSave = onLogQso,
+        )
     }
 
 }
@@ -546,6 +571,7 @@ private fun RadioHeader(
     onDismissQuickConnect: () -> Unit,
     onLoadProfile: (String) -> Unit,
     onSettings: () -> Unit,
+    onQuickQso: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.statusBarsPadding(),
@@ -590,6 +616,7 @@ private fun RadioHeader(
                     }
                 }
             }
+            TextButton(onClick = onQuickQso) { Text("LOG") }
             TextButton(onClick = onSettings) { Text("SETTINGS") }
         }
     }
@@ -1180,11 +1207,15 @@ private fun SettingsSheet(
     onInspect: (RadioDeviceChoice) -> Unit,
     onProfileNameChanged: (String) -> Unit,
     onSaveProfile: () -> Unit,
+    onDeleteProfile: (String) -> Unit,
+    onDeleteQso: (Long) -> Unit,
     onLoadProfile: (String) -> Unit,
 ) {
     var showUnknownRangeWarning by remember { mutableStateOf(false) }
     var showAdditionalRadioInfo by remember { mutableStateOf(false) }
     var showDiagnostics by remember { mutableStateOf(false) }
+    var showQsoLog by remember { mutableStateOf(false) }
+    var profileToDelete by remember { mutableStateOf<RadioProfile?>(null) }
     val context = LocalContext.current
     val diagnostics = diagnosticsText(state, version)
     Column(
@@ -1214,16 +1245,31 @@ private fun SettingsSheet(
             Text("No radio profiles saved yet.", fontSize = 12.sp)
         }
         state.profiles.forEach { profile ->
-            Button(
-                onClick = { onLoadProfile(profile.id) },
-                enabled = !state.savingProfile && !state.loadingProfile && !state.discovering && !state.inspecting &&
-                    !state.txActive && !state.txBusy,
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-            ) { Text("${profile.name} • ${profile.host}:${profile.port}") }
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = { onLoadProfile(profile.id) },
+                    enabled = !state.savingProfile && !state.loadingProfile && !state.discovering &&
+                        !state.inspecting && !state.txActive && !state.txBusy,
+                    modifier = Modifier.weight(1f),
+                ) { Text("${profile.name} • ${profile.host}:${profile.port}") }
+                TextButton(
+                    onClick = { profileToDelete = profile },
+                    enabled = !state.savingProfile && !state.loadingProfile,
+                ) { Text("Delete") }
+            }
         }
         if (state.loadingProfile || state.profileStatus.isNotBlank()) {
             Text(state.profileStatus, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
         }
+        HorizontalDivider(Modifier.padding(vertical = 16.dp))
+        Text("Quick QSO log", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Local contacts; export to ADIF when needed.", fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton(
+            onClick = { showQsoLog = true },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        ) { Text("View QSO log (${state.qsoEntries.size})") }
         HorizontalDivider(Modifier.padding(vertical = 16.dp))
         Text("Advanced sample rate", fontSize = 18.sp, fontWeight = FontWeight.Bold)
         SampleRateSelector(
@@ -1376,6 +1422,27 @@ private fun SettingsSheet(
         )
     }
 
+    profileToDelete?.let { profile ->
+        AlertDialog(
+            onDismissRequest = { profileToDelete = null },
+            title = { Text("Delete saved radio?") },
+            text = { Text("Delete ${profile.name}? The current radio connection will stay open.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteProfile(profile.id)
+                    profileToDelete = null
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { profileToDelete = null }) { Text("Cancel") }
+            },
+        )
+    }
+    if (showQsoLog) {
+        QsoLogViewer(state.qsoEntries, state.qsoStatus, onDeleteQso,
+            onDismiss = { showQsoLog = false })
+    }
+
     if (showAdditionalRadioInfo) {
         AlertDialog(
             onDismissRequest = { showAdditionalRadioInfo = false },
@@ -1453,6 +1520,157 @@ private fun SettingsSheet(
         )
     }
 }
+
+@Composable
+private fun QuickQsoDialog(
+    frequencyHz: Double?,
+    mode: String,
+    onDismiss: () -> Unit,
+    onSave: (String, String, (String?) -> Unit) -> Unit,
+) {
+    var callsign by remember { mutableStateOf("") }
+    var comment by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text("Quick QSO log") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("${displayFrequency(frequencyHz)} • $mode • current UTC time",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = callsign,
+                    onValueChange = { callsign = it; error = null },
+                    label = { Text("Callsign *") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = comment,
+                    onValueChange = { comment = it },
+                    label = { Text("Comments (optional)") },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    saving = true
+                    onSave(callsign, comment) { failure ->
+                        saving = false
+                        if (failure == null) onDismiss() else error = failure
+                    }
+                },
+                enabled = callsign.isNotBlank() && !saving,
+            ) { Text(if (saving) "Saving…" else "Log") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun QsoLogViewer(
+    entries: List<QsoEntry>,
+    status: String,
+    onDelete: (Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    var entryToDelete by remember { mutableStateOf<QsoEntry?>(null) }
+    var exportText by remember { mutableStateOf<String?>(null) }
+    var exportStatus by remember { mutableStateOf("") }
+    val createDocument = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        if (uri != null) {
+            val result = runCatching {
+                val content = checkNotNull(exportText)
+                val stream = checkNotNull(context.contentResolver.openOutputStream(uri))
+                stream.use { it.write(content.toByteArray(Charsets.US_ASCII)) }
+            }
+            exportStatus = result.exceptionOrNull()?.let { "Export failed: ${it.message}" }
+                ?: "ADIF export saved"
+        }
+        exportText = null
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("QSO log") },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                if (entries.isEmpty()) Text("No contacts logged yet.")
+                else Column(Modifier.fillMaxWidth().height(320.dp)
+                    .verticalScroll(rememberScrollState())) {
+                    entries.forEach { entry ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(entry.callsign, fontWeight = FontWeight.Bold)
+                                Text("${qsoUtcLabel(entry.timestampUtcMillis)} • " +
+                                    "${displayFrequency(entry.frequencyHz.toDouble())} • ${entry.mode}",
+                                    fontSize = 11.sp)
+                                if (entry.comment.isNotBlank()) Text(entry.comment, fontSize = 12.sp)
+                            }
+                            TextButton(onClick = { entryToDelete = entry }) { Text("Delete") }
+                        }
+                        HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                    }
+                }
+                if (status.isNotBlank()) Text(status, fontSize = 12.sp)
+                if (exportStatus.isNotBlank()) Text(exportStatus, fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val defaultDate = entries.minOfOrNull { it.timestampUtcMillis }
+                    ?.let { Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate() }
+                    ?: LocalDate.now(ZoneOffset.UTC)
+                DatePickerDialog(context, { _, year, month, day ->
+                    val fromDate = LocalDate.of(year, month + 1, day)
+                    val selected = entries.filter {
+                        !Instant.ofEpochMilli(it.timestampUtcMillis).atZone(ZoneOffset.UTC)
+                            .toLocalDate().isBefore(fromDate)
+                    }
+                    if (selected.isEmpty()) {
+                        exportStatus = "No QSOs on or after $fromDate (UTC)"
+                    } else {
+                        exportText = QsoAdif.export(selected, fromDate)
+                        createDocument.launch("ChrissySDR-QSO-${fromDate.format(DateTimeFormatter.BASIC_ISO_DATE)}.adi")
+                    }
+                }, defaultDate.year, defaultDate.monthValue - 1, defaultDate.dayOfMonth).apply {
+                    setTitle("Export on or after (UTC)")
+                    show()
+                }
+            }, enabled = entries.isNotEmpty()) { Text("Export ADIF") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+    entryToDelete?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { entryToDelete = null },
+            title = { Text("Delete QSO?") },
+            text = { Text("Delete ${entry.callsign} from the local log? This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = { onDelete(entry.id); entryToDelete = null }) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { entryToDelete = null }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+private fun qsoUtcLabel(timestampMillis: Long): String =
+    Instant.ofEpochMilli(timestampMillis).atZone(ZoneOffset.UTC)
+        .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'", Locale.ROOT))
 
 @Composable
 private fun ConnectionSetupSection(

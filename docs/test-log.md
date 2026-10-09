@@ -12,6 +12,22 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-09 — Quick QSO log and saved-profile deletion
+
+- **Layout adjustment:** `0.7.0-beta.2-dev.2` (version code 61) puts LOG
+  immediately to the left of SETTINGS in the top bar; no QSO behavior changed.
+- **App version:** `0.7.0-beta.2-dev.1` local debug APK, version code 60.
+- **Scope:** Add a quick callsign/comment entry beside Settings. Save current
+  frequency, mode, and UTC time in Room. View and delete contacts in Settings,
+  and export contacts on or after a selected UTC date to an ADIF `.adi` file.
+  Settings also offers confirmed deletion of saved radio profiles without
+  stopping an active radio session.
+- **Automated result:** Unit tests and debug APK assembly pass, including ADIF
+  UTC date filtering, mode mapping, and ASCII export of comments.
+- **Device result:** Operator tested `0.7.0-beta.2-dev.2` successfully: added
+  a contact, viewed all log entries, exported ADIF, deleted a log entry, and
+  deleted a saved station profile. The LOG button placement was also approved.
+
 ## 2026-10-08 — 0.6 receiver acceptance sign-off
 
 - **Scope:** Sustained AM/NFM/USB/LSB reception, background audio, spectrum

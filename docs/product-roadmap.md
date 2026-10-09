@@ -100,7 +100,7 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 After safe Soapy TX:
 
 - [ ] Saved frequencies, named stations/channels, and band presets.
-- [ ] Quick QSO log entry for recording a contact on the go; not a replacement for a full logging program.
+- [x] Quick QSO log entry for recording a contact on the go; not a replacement for a full logging program.
 - [ ] Waterfall display.
 - [ ] Adjustable lower and upper receive-audio filter edges beyond the current passband-width control.
 - [ ] Receive noise blanker for short electrical clicks and pulses.

@@ -34,33 +34,37 @@ The current development build can:
 - Open an RX stream using `CS8`, `CS16`, or `CF32` samples.
 - Select a radio-supported RX sample rate and hardware bandwidth, and retry a
   previously established RX stream after a connection interruption.
-- Save named radio profiles locally and load one to connect and start RX in a
-  single tap (hardware testing pending).
+- Save named radio profiles locally, load one to connect and start RX in a
+  single tap, and delete profiles that are no longer needed.
+- Record a quick QSO with a callsign and optional comment; the app saves the
+  current frequency, mode, and UTC time locally. View or delete entries in
+  Settings and export contacts from a selected UTC date as ADIF.
 - Use the header for quick connection to a saved radio, the bottom frequency or
   mode area for operating controls, and SETTINGS for radio/app configuration.
-- Play an experimental AM receive stream through Android audio.
+- Receive AM voice through Android audio.
 - Default AM to a 6 kHz RF passband, with manual adjustment available.
 - Receive NFM voice with a 12.5 kHz default RF width, adjustable audio filter,
   and Off/50/75 µs deemphasis.
 - Receive USB and LSB voice with a default 3 kHz sideband passband and
   sideband-selective product detection; tuning is referenced to the suppressed
-  carrier. Frequency, mode, and passband changes restart RX automatically. Transmit
-  remains AM-only for now.
-- Send a confirmation-gated, 30-second experimental AM microphone transmission
-  on radios that report compatible TX capabilities.
+  carrier. Compatible frequency, mode, and passband changes retain the RX
+  stream.
+- Send experimental AM, NFM, USB, and LSB microphone transmissions on radios
+  that report compatible TX capabilities, using tap-to-latch PTT and a
+  configurable timeout.
 - Report basic stream and signal statistics.
 - Display a live RX spectrum with adjustable span, averaging, and dB scale;
   show the tuned center and the mode's passband. Tap or drag the spectrum to
   tune RX with a selectable frequency step.
 
-Transmit is the central long-term purpose of ChrissySDR. The current AM transmit
+Transmit is the central long-term purpose of ChrissySDR. The current transmit
 path is an early controlled test facility, not a production-ready transmitter.
 Additional operating controls, TX safety mechanisms, and on-air validation
 remain under development. Driver settings are currently read-only, and sensor
 values are snapshots taken during device inspection rather than live meters.
 
 The [GitHub Releases](https://github.com/compuvin/ChrissySDR/releases) page
-provides test APKs. The `0.5.3` APK is debug-signed for testing; it is not a
+provides test APKs. The `0.7.0-beta.1` APK is debug-signed for testing; it is not a
 production-signed or Play Store build.
 
 ## Screenshots
@@ -83,9 +87,10 @@ The first complete receiver is planned to include:
 - Background reception through an Android foreground media service.
 - A modern portrait-oriented interface built with Jetpack Compose.
 
-Safe SoapyRemote voice transmit will follow the complete receiver. Later work
-is expected to add memories, a waterfall, CW support, additional device
-validation, and a separate direct flex1500d backend.
+The `0.7` beta begins SoapyRemote voice transmit; safety and broader TX
+validation remain on the roadmap. Later work is expected to add memories, a
+waterfall, CW support, additional device validation, and a separate direct
+flex1500d backend.
 
 The detailed milestones and technical plan are in
 [docs/product-roadmap.md](docs/product-roadmap.md).

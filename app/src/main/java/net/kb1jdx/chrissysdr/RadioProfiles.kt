@@ -64,11 +64,15 @@ interface RadioProfileDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun upsert(profile: RadioProfileEntity)
 
+    @Query("DELETE FROM radio_profiles WHERE id = :id")
+    fun deleteById(id: String): Int
+
 }
 
-@Database(entities = [RadioProfileEntity::class], version = 5, exportSchema = true)
+@Database(entities = [RadioProfileEntity::class, QsoEntry::class], version = 7, exportSchema = true)
 abstract class ChrissyDatabase : RoomDatabase() {
     abstract fun radioProfiles(): RadioProfileDao
+    abstract fun qsoLog(): QsoLogDao
 
     companion object {
         @Volatile private var instance: ChrissyDatabase? = null
@@ -94,13 +98,25 @@ abstract class ChrissyDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE radio_profiles ADD COLUMN noiseReductionLevelsJson TEXT NOT NULL DEFAULT '{}'")
             }
         }
+        // Version 6 was used only by an unpublished DeepFilterNet test build.
+        private val migration5To7 = object : Migration(5, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""CREATE TABLE IF NOT EXISTS qso_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    callsign TEXT NOT NULL, comment TEXT NOT NULL,
+                    frequencyHz INTEGER NOT NULL, mode TEXT NOT NULL,
+                    timestampUtcMillis INTEGER NOT NULL
+                )""")
+            }
+        }
 
         fun get(context: Context): ChrissyDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 ChrissyDatabase::class.java,
                 "chrissysdr.db",
-            ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5)
+            ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5,
+                migration5To7)
                 .build().also { instance = it }
         }
     }

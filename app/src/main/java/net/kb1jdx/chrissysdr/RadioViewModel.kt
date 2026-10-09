@@ -1,6 +1,8 @@
 package com.kb1jdx.chrissysdr
 
 import android.app.Application
+import android.os.Handler
+import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import com.kb1jdx.chrissysdr.radio.RadioChannelCapabilities
 import com.kb1jdx.chrissysdr.radio.RadioArgumentInfo
@@ -26,6 +28,8 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.UUID
 import java.math.BigDecimal
 import kotlin.math.round
+import kotlin.math.roundToLong
+import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,6 +70,8 @@ data class RadioUiState(
     val deviceDetails: String = "",
     val additionalDeviceDetails: String = "",
     val profiles: List<RadioProfile> = emptyList(),
+    val qsoEntries: List<QsoEntry> = emptyList(),
+    val qsoStatus: String = "",
     val profileName: String = "",
     val activeProfileId: String? = null,
     val loadingProfile: Boolean = false,
@@ -106,7 +112,10 @@ data class RadioUiState(
 class RadioViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("radio_safety", 0)
     private val profileDao = ChrissyDatabase.get(application).radioProfiles()
+    private val qsoDao = ChrissyDatabase.get(application).qsoLog()
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val worker = Executors.newCachedThreadPool()
+    private val qsoWorker = Executors.newSingleThreadExecutor()
     private val retryScheduler = Executors.newSingleThreadScheduledExecutor()
     private val rxGeneration = AtomicLong()
     private val txErrorGeneration = AtomicLong()
@@ -146,6 +155,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update { it.copy(txTimeoutSeconds = savedTimeout) }
         }
         worker.execute { refreshProfiles() }
+        qsoWorker.execute { refreshQsoEntries() }
     }
 
     fun setTxTimeoutSeconds(seconds: Int) {
@@ -161,6 +171,82 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure { error ->
                 mutableState.update { it.copy(profileStatus = "Could not read profiles: ${error.message}") }
             }
+    }
+
+    private fun refreshQsoEntries() {
+        runCatching { qsoDao.all() }
+            .onSuccess { entries -> mutableState.update { it.copy(qsoEntries = entries) } }
+            .onFailure { error -> mutableState.update {
+                it.copy(qsoStatus = "Could not read QSO log: ${error.message}")
+            } }
+    }
+
+    fun logQso(callsign: String, comment: String, onComplete: (String?) -> Unit) {
+        val call = callsign.trim().uppercase(Locale.ROOT)
+        val snapshot = mutableState.value
+        val frequency = snapshot.frequency.toDoubleOrNull()
+        val error = when {
+            call.isBlank() -> "Enter a callsign"
+            frequency == null || !frequency.isFinite() || frequency <= 0.0 ||
+                frequency >= Long.MAX_VALUE.toDouble() -> "Current frequency is invalid"
+            snapshot.mode !in setOf("AM", "NFM", "USB", "LSB") -> "Current mode is unsupported"
+            else -> null
+        }
+        if (error != null) { onComplete(error); return }
+        val entry = QsoEntry(
+            callsign = call,
+            comment = comment.trim(),
+            frequencyHz = frequency!!.roundToLong(),
+            mode = snapshot.mode,
+            timestampUtcMillis = System.currentTimeMillis(),
+        )
+        qsoWorker.execute {
+            val result = runCatching { qsoDao.insert(entry) }
+            result.onSuccess {
+                refreshQsoEntries()
+                mutableState.update { it.copy(qsoStatus = "Logged $call") }
+            }.onFailure { failure -> mutableState.update {
+                it.copy(qsoStatus = "Could not log QSO: ${failure.message}")
+            } }
+            mainHandler.post { onComplete(result.exceptionOrNull()?.let {
+                "Could not log QSO: ${it.message}"
+            }) }
+        }
+    }
+
+    fun deleteQso(id: Long) {
+        if (id <= 0) return
+        qsoWorker.execute {
+            runCatching { qsoDao.deleteById(id) }
+                .onSuccess { deleted ->
+                    refreshQsoEntries()
+                    mutableState.update { it.copy(qsoStatus =
+                        if (deleted > 0) "QSO deleted" else "QSO no longer exists") }
+                }
+                .onFailure { error -> mutableState.update {
+                    it.copy(qsoStatus = "Could not delete QSO: ${error.message}")
+                } }
+        }
+    }
+
+    fun deleteRadioProfile(id: String) {
+        if (mutableState.value.savingProfile || mutableState.value.loadingProfile) return
+        worker.execute {
+            runCatching { profileDao.deleteById(id) }
+                .onSuccess { deleted ->
+                    refreshProfiles()
+                    mutableState.update { current ->
+                        current.copy(
+                            activeProfileId = current.activeProfileId.takeUnless { it == id },
+                            profileName = if (current.activeProfileId == id) "" else current.profileName,
+                            profileStatus = if (deleted > 0) "Saved radio deleted" else "Saved radio no longer exists",
+                        )
+                    }
+                }
+                .onFailure { error -> mutableState.update {
+                    it.copy(profileStatus = "Could not delete saved radio: ${error.message}")
+                } }
+        }
     }
 
     fun setProfileName(value: String) = mutableState.update { it.copy(profileName = value) }
@@ -1503,6 +1589,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         radioService?.setExternalStopListener(null)
         radioService = null
         worker.shutdownNow()
+        qsoWorker.shutdownNow()
         retryScheduler.shutdownNow()
     }
 
