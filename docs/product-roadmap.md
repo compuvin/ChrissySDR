@@ -78,7 +78,7 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
   - [x] Negotiated format/rate/bandwidth.
   - [x] Stream rate, underruns/overruns, sequence gaps, and recent errors.
 - [x] Produce reproducible personal/test APKs with visible semantic development versions.
-- [ ] Acceptance gate: sustained AM/NFM/USB/LSB reception, stable background audio, correct spectrum tuning, and clean start/stop behavior on the FLEX-1500 plus a second device or simulated server using a substantially different sample rate.
+- [x] Acceptance gate: sustained AM/NFM/USB/LSB reception, stable background audio, correct spectrum tuning, and clean start/stop behavior on the FLEX-1500 plus a second device or simulated server using a substantially different sample rate.
 
 ### 0.7 — Safe Soapy Voice Transmit
 

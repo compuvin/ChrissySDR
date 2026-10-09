@@ -12,6 +12,17 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-08 — 0.6 receiver acceptance sign-off
+
+- **Scope:** Sustained AM/NFM/USB/LSB reception, background audio, spectrum
+  tuning, and clean start/stop on the FLEX-1500 and a second radio with a
+  substantially different sample rate.
+- **Result:** Operator confirms completing and approving all named acceptance
+  tests. The 0.6 roadmap gate is checked off on that sign-off.
+- **Record limit:** Individual durations, rates, modes per device, and logs
+  were not supplied with this sign-off; earlier individual results remain
+  elsewhere in this log.
+
 ## 2026-10-08 — RNNoise 0.2 and Android DeepFilterNet comparison
 
 - **App version:** `0.5.4-dev.19` local debug APK, version code 56.
