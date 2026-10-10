@@ -265,6 +265,7 @@ class SoapyRemoteTxSession private constructor(
         private const val ACTIVATE_STREAM = 302
         private const val DEACTIVATE_STREAM = 303
         private const val SET_FREQUENCY = 800
+        private const val SET_GAIN_ELEMENT = 704
         private const val SET_SAMPLE_RATE = 900
         private const val GET_SAMPLE_RATE = 901
         private const val STREAM_HEADER_BYTES = 24
@@ -285,6 +286,7 @@ class SoapyRemoteTxSession private constructor(
             format: String,
             fullScale: Double,
             mode: String,
+            txGains: Map<String, Double>,
         ): SoapyRemoteTxSession {
             require(sampleRate >= 8_000) { "TX sample rate must be at least 8000 Hz" }
             IqSampleCodec(format, fullScale)
@@ -297,6 +299,10 @@ class SoapyRemoteTxSession private constructor(
                 transact(
                     SoapyRpcWriter().call(SET_SAMPLE_RATE).char(TX).int32(0).float64(sampleRate),
                 ) { it.requireVoid() }
+                txGains.forEach { (name, gain) ->
+                    transact(SoapyRpcWriter().call(SET_GAIN_ELEMENT).char(TX).int32(0)
+                        .string(name).float64(gain)) { it.requireVoid() }
+                }
                 transact(
                     SoapyRpcWriter().call(SET_FREQUENCY).char(TX).int32(0)
                         .float64(frequencyHz).kwargs(emptyMap()),

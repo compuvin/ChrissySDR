@@ -145,6 +145,7 @@ class SoapyRemoteBackend(
             config.format,
             config.fullScale,
             config.mode,
+            config.txGains,
         )
         return object : RadioTransmitter {
             override val appliedSampleRate = session.outputSampleRate

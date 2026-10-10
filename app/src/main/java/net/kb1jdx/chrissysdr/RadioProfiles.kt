@@ -28,6 +28,7 @@ data class RadioProfile(
     val mode: String = "AM",
     val sampleRateOverrideHz: Double?,
     val rxGains: Map<String, Double> = emptyMap(),
+    val txGains: Map<String, Double> = emptyMap(),
     val rxHardwareAgc: Boolean? = null,
     val rxAntenna: String? = null,
     val squelchThresholdsDbfs: Map<String, Double> = emptyMap(),
@@ -47,6 +48,7 @@ data class RadioProfileEntity(
     @ColumnInfo(defaultValue = "'AM'") val mode: String,
     val sampleRateOverrideHz: Double?,
     @ColumnInfo(defaultValue = "'{}'") val rxGainsJson: String,
+    @ColumnInfo(defaultValue = "'{}'") val txGainsJson: String = "{}",
     val rxHardwareAgc: Boolean?,
     val rxAntenna: String?,
     @ColumnInfo(defaultValue = "'{}'") val squelchThresholdsJson: String = "{}",
@@ -69,7 +71,7 @@ interface RadioProfileDao {
 
 }
 
-@Database(entities = [RadioProfileEntity::class, QsoEntry::class], version = 7, exportSchema = true)
+@Database(entities = [RadioProfileEntity::class, QsoEntry::class], version = 8, exportSchema = true)
 abstract class ChrissyDatabase : RoomDatabase() {
     abstract fun radioProfiles(): RadioProfileDao
     abstract fun qsoLog(): QsoLogDao
@@ -109,6 +111,11 @@ abstract class ChrissyDatabase : RoomDatabase() {
                 )""")
             }
         }
+        private val migration7To8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE radio_profiles ADD COLUMN txGainsJson TEXT NOT NULL DEFAULT '{}'")
+            }
+        }
 
         fun get(context: Context): ChrissyDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
@@ -116,7 +123,7 @@ abstract class ChrissyDatabase : RoomDatabase() {
                 ChrissyDatabase::class.java,
                 "chrissysdr.db",
             ).addMigrations(migration1To2, migration2To3, migration3To4, migration4To5,
-                migration5To7)
+                migration5To7, migration7To8)
                 .build().also { instance = it }
         }
     }
@@ -134,6 +141,7 @@ fun RadioProfile.toEntity() = RadioProfileEntity(
     mode = mode,
     sampleRateOverrideHz = sampleRateOverrideHz,
     rxGainsJson = JSONObject(rxGains).toString(),
+    txGainsJson = JSONObject(txGains).toString(),
     rxHardwareAgc = rxHardwareAgc,
     rxAntenna = rxAntenna,
     squelchThresholdsJson = JSONObject(squelchThresholdsDbfs).toString(),
@@ -143,6 +151,7 @@ fun RadioProfile.toEntity() = RadioProfileEntity(
 fun RadioProfileEntity.toProfile(): RadioProfile {
     val json = JSONObject(deviceArgumentsJson)
     val gains = JSONObject(rxGainsJson)
+    val txGains = JSONObject(txGainsJson)
     val squelch = JSONObject(squelchThresholdsJson)
     val noiseReduction = JSONObject(noiseReductionLevelsJson)
     return RadioProfile(
@@ -157,6 +166,7 @@ fun RadioProfileEntity.toProfile(): RadioProfile {
         mode = mode,
         sampleRateOverrideHz = sampleRateOverrideHz,
         rxGains = gains.keys().asSequence().associateWith { gains.getDouble(it) },
+        txGains = txGains.keys().asSequence().associateWith { txGains.getDouble(it) },
         rxHardwareAgc = rxHardwareAgc,
         rxAntenna = rxAntenna,
         squelchThresholdsDbfs = squelch.keys().asSequence().mapNotNull { mode ->

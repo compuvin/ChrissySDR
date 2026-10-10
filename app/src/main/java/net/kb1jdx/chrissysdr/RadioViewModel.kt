@@ -99,6 +99,8 @@ data class RadioUiState(
     val rxAntenna: String? = null,
     val txAvailable: Boolean = false,
     val txFrequencyRanges: List<RadioRange> = emptyList(),
+    val txGainRanges: Map<String, RadioRange> = emptyMap(),
+    val txGainValues: Map<String, Double> = emptyMap(),
     val txActive: Boolean = false,
     val txBusy: Boolean = false,
     val txStatus: String = "TX unavailable",
@@ -131,6 +133,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     private var selectedRxFormat: StreamFormatChoice? = null
     private var selectedRxCapabilities: RadioChannelCapabilities? = null
     private var rxGainOverrides: Map<String, Double> = emptyMap()
+    private var txGainOverrides: Map<String, Double> = emptyMap()
     private var rxHardwareAgcOverride: Boolean? = null
     private var rxAntennaOverride: String? = null
     private var selectedTxFormat: StreamFormatChoice? = null
@@ -278,6 +281,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             mode = snapshot.mode,
             sampleRateOverrideHz = if (snapshot.sampleRateAutomatic) null else snapshot.sampleRateHz,
             rxGains = (snapshot.rxGainValues + rxGainOverrides).filterValues { it.isFinite() },
+            txGains = txGainOverrides,
             rxHardwareAgc = (rxHardwareAgcOverride ?: snapshot.rxHardwareAgc)
                 .takeIf { snapshot.rxHardwareAgcSupported },
             rxAntenna = rxAntennaOverride ?: snapshot.rxAntenna,
@@ -330,6 +334,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         rxActive = false, rxBusy = false, rxStatus = "Opening saved radio…",
                         rxAvailable = false, txAvailable = false,
                         txFrequencyRanges = emptyList(),
+                        txGainRanges = emptyMap(), txGainValues = emptyMap(),
                         rxGainRanges = emptyMap(), rxGainValues = emptyMap(),
                         rxHardwareAgcSupported = false, rxHardwareAgc = null,
                         rxAntennas = emptyList(), rxAntenna = null,
@@ -340,6 +345,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 selectedHost = null
                 selectedRxCapabilities = null
                 rxGainOverrides = emptyMap()
+                txGainOverrides = emptyMap()
                 rxHardwareAgcOverride = null
                 rxAntennaOverride = null
                 selectedTxCapabilities = null
@@ -355,11 +361,17 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 configureDevice(profile.host, profile.port, choice, info)
                 val savedControls = supportedSavedRxControls(profile, info.rx)
                 rxGainOverrides = savedControls.gains
+                txGainOverrides = profile.txGains.mapNotNull { (name, value) ->
+                    val range = info.tx?.gainRanges?.get(name)
+                    if (range != null && value.isFinite() && value in range.minimum..range.maximum)
+                        name to value else null
+                }.toMap()
                 rxHardwareAgcOverride = savedControls.hardwareAgc
                 rxAntennaOverride = savedControls.antenna
                 mutableState.update {
                     it.copy(
                         rxGainValues = it.rxGainValues + rxGainOverrides,
+                        txGainValues = it.txGainValues + txGainOverrides,
                         rxHardwareAgc = rxHardwareAgcOverride ?: it.rxHardwareAgc,
                         rxAntenna = rxAntennaOverride ?: it.rxAntenna,
                     )
@@ -584,6 +596,18 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         rxGainOverrides = rxGainOverrides + (name to applied)
         if (snapshot.rxActive) startReceiver()
         else mutableState.update { it.copy(rxGainValues = it.rxGainValues + (name to applied)) }
+    }
+    fun setTxGain(name: String, value: Double) {
+        val snapshot = mutableState.value
+        val range = snapshot.txGainRanges[name] ?: return
+        if (!value.isFinite() || value !in range.minimum..range.maximum ||
+            snapshot.txActive || snapshot.txBusy) return
+        val applied = if (range.step.isFinite() && range.step > 0.0) {
+            (range.minimum + round((value - range.minimum) / range.step) * range.step)
+                .coerceIn(range.minimum, range.maximum)
+        } else value
+        txGainOverrides = txGainOverrides + (name to applied)
+        mutableState.update { it.copy(txGainValues = it.txGainValues + (name to applied)) }
     }
     fun setRxHardwareAgc(enabled: Boolean) {
         val snapshot = mutableState.value
@@ -917,6 +941,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 rxAvailable = false,
                 txAvailable = false,
                 txFrequencyRanges = emptyList(),
+                txGainRanges = emptyMap(), txGainValues = emptyMap(),
                 rxGainRanges = emptyMap(), rxGainValues = emptyMap(),
                 rxHardwareAgcSupported = false, rxHardwareAgc = null,
                 rxAntennas = emptyList(), rxAntenna = null,
@@ -926,6 +951,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         selectedHost = null
         selectedRxCapabilities = null
         rxGainOverrides = emptyMap()
+        txGainOverrides = emptyMap()
         rxHardwareAgcOverride = null
         rxAntennaOverride = null
         selectedTxCapabilities = null
@@ -1048,6 +1074,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             ?.toBooleanStrictOrNull() ?: true
         val txCapabilities = info.tx
         availableTxCapabilities = txCapabilities
+        txGainOverrides = emptyMap()
         txPermittedByServer = stationOwner && transmitEnabled
         selectedTxFormat = txCapabilities.supportedFormat()
         selectedTxSampleRate = txCapabilities?.let {
@@ -1116,6 +1143,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 },
                 txAvailable = txAvailable,
                 txFrequencyRanges = selectedTxCapabilities?.frequencyRanges.orEmpty(),
+                txGainRanges = txCapabilities?.gainRanges.orEmpty(),
+                txGainValues = txCapabilities?.currentGains.orEmpty(),
                 txStatus = txMessage,
                 txRangesUnreported = txRangesUnreported,
                 allowUnknownTxRange = allowUnknownTxRange,
@@ -1490,6 +1519,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         sampleRate = sampleRate,
                         format = format.format,
                         fullScale = format.fullScale,
+                        txGains = txGainOverrides,
                         mode = snapshot.mode,
                         timeoutSeconds = snapshot.txTimeoutSeconds,
                     ),
@@ -1637,7 +1667,8 @@ private fun formatCapabilities(label: String, capabilities: RadioChannelCapabili
     append("\nAntennas: ${capabilities.antennas.display()}")
     append("\nGain controls: ${capabilities.gains.joinToString().ifEmpty { "not reported" }}")
     capabilities.gainRanges.forEach { (name, range) ->
-        append("\n  $name: ${listOf(range).displayRanges()}")
+        append("\n  $name: ${"%.5f".format(Locale.US, range.minimum)}–${"%.5f".format(Locale.US, range.maximum)} dB")
+        if (range.step > 0.0) append(" (step ${"%.5f".format(Locale.US, range.step)} dB)")
     }
     append("\nAutomatic gain: ${capabilities.automaticGain.reportedBoolean()}")
     append("\nFull duplex: ${capabilities.fullDuplex.reportedBoolean()}")

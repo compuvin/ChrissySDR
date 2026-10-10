@@ -107,6 +107,7 @@ data class TransmitterConfig(
     val sampleRate: Double,
     val format: String,
     val fullScale: Double,
+    val txGains: Map<String, Double> = emptyMap(),
     val mode: String = "AM",
     val timeoutSeconds: Int = 180,
 )

@@ -12,6 +12,22 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-09 — Capability-aware TX gain control
+
+- **UI refinement:** `0.7.0-beta.2-dev.5` (version code 64) uses compact,
+  consistent RX/TX gain labels without duplicated direction names or extra
+  TX explanatory text. Device test pending.
+- **Diagnostics correction:** `0.7.0-beta.2-dev.4` (version code 63) labels
+  gain ranges and steps in dB rather than Hz.
+- **App version:** `0.7.0-beta.2-dev.3` local debug APK, version code 62.
+- **Scope:** Show TX gain sliders in Operating Controls only for advertised gain
+  ranges with readable current values. Apply selected gain elements during TX
+  setup and save explicit selections with the radio profile. Radios without
+  usable TX gain information retain their driver defaults.
+- **Automated result:** Unit tests and debug APK assembly pass.
+- **Device result:** Operator reports the TX gain changes tested successfully.
+  TX gain is not a calibrated RF power reading.
+
 ## 2026-10-09 — Quick QSO log and saved-profile deletion
 
 - **Layout adjustment:** `0.7.0-beta.2-dev.2` (version code 61) puts LOG

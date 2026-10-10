@@ -204,6 +204,7 @@ class MainActivity : ComponentActivity() {
                     onSpectrumSpanChanged = radio::setSpectrumSpanHz,
                     onTuningStepChanged = radio::setTuningStepHz,
                     onRxGainChanged = radio::setRxGain,
+                    onTxGainChanged = radio::setTxGain,
                     onRxHardwareAgcChanged = radio::setRxHardwareAgc,
                     onRxAntennaChanged = radio::setRxAntenna,
                     onSpectrumTune = radio::tuneSpectrumTo,
@@ -290,6 +291,7 @@ private fun RadioScreen(
     onSpectrumSpanChanged: (Double?) -> Unit,
     onTuningStepChanged: (Double) -> Unit,
     onRxGainChanged: (String, Double) -> Unit,
+    onTxGainChanged: (String, Double) -> Unit,
     onRxHardwareAgcChanged: (Boolean) -> Unit,
     onRxAntennaChanged: (String) -> Unit,
     onSpectrumTune: (Double) -> Unit,
@@ -383,6 +385,7 @@ private fun RadioScreen(
                     onNoiseReductionChanged = onNoiseReductionChanged,
                     onTuningStepChanged = onTuningStepChanged,
                     onRxGainChanged = onRxGainChanged,
+                    onTxGainChanged = onTxGainChanged,
                     onRxHardwareAgcChanged = onRxHardwareAgcChanged,
                     onStartRx = onStartRx,
                     onStopRx = onStopRx,
@@ -936,6 +939,7 @@ private fun OperatingControlsSheet(
     onNoiseReductionChanged: (Int) -> Unit,
     onTuningStepChanged: (Double) -> Unit,
     onRxGainChanged: (String, Double) -> Unit,
+    onTxGainChanged: (String, Double) -> Unit,
     onRxHardwareAgcChanged: (Boolean) -> Unit,
     onStartRx: () -> Unit,
     onStopRx: () -> Unit,
@@ -1127,7 +1131,7 @@ private fun OperatingControlsSheet(
                 range.minimum.toFloat().isFinite() && range.maximum.toFloat().isFinite()
             ) {
                 var draft by remember(name, current) { mutableStateOf(current.toFloat()) }
-                Text("RX $name gain: %.1f dB".format(draft), fontSize = 13.sp)
+                Text("${gainLabel("RX", name)}: %.1f dB".format(draft), fontSize = 13.sp)
                 Slider(
                     value = draft.coerceIn(range.minimum.toFloat(), range.maximum.toFloat()),
                     onValueChange = { draft = it },
@@ -1137,7 +1141,7 @@ private fun OperatingControlsSheet(
                         !state.rxBusy && !state.txActive && !state.txBusy,
                 )
             } else {
-                Text("RX $name gain unavailable: current value or range not reported",
+                Text("${gainLabel("RX", name)} unavailable: current value or range not reported",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -1145,11 +1149,37 @@ private fun OperatingControlsSheet(
             Text("Switch off Radio AGC to adjust gain", fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        if (state.txGainRanges.isNotEmpty()) {
+            HorizontalDivider(Modifier.padding(vertical = 16.dp))
+            state.txGainRanges.forEach { (name, range) ->
+                val current = state.txGainValues[name]
+                if (current != null && current.isFinite() && range.minimum.isFinite() &&
+                    range.maximum.isFinite() && range.maximum > range.minimum &&
+                    range.minimum.toFloat().isFinite() && range.maximum.toFloat().isFinite()
+                ) {
+                    var draft by remember(name, current) { mutableStateOf(current.toFloat()) }
+                    Text("${gainLabel("TX", name)}: %.1f dB".format(draft), fontSize = 13.sp)
+                    Slider(
+                        value = draft.coerceIn(range.minimum.toFloat(), range.maximum.toFloat()),
+                        onValueChange = { draft = it },
+                        onValueChangeFinished = { onTxGainChanged(name, draft.toDouble()) },
+                        valueRange = range.minimum.toFloat()..range.maximum.toFloat(),
+                        enabled = !state.txActive && !state.txBusy,
+                    )
+                } else {
+                    Text("${gainLabel("TX", name)} unavailable: current value or range not reported",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
         Text("Tap the spectrum to select a signal; drag and release to tune.",
             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
     }
 }
+
+private fun gainLabel(direction: String, name: String): String =
+    if (name.equals(direction, ignoreCase = true)) "$direction gain" else "$direction $name gain"
 
 @Composable
 private fun TuningStepSelector(stepHz: Double, onSelected: (Double) -> Unit) {
