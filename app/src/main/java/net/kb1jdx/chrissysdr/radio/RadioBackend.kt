@@ -137,6 +137,9 @@ interface RadioReceiver : AutoCloseable {
     val appliedSampleRate: Double
     val appliedHardwareBandwidth: Double? get() = null
     fun setAudioVolume(volume: Float)
+    /** Deactivate RX without destroying its stream, then reactivate after TX. */
+    fun suspendForTransmit()
+    fun resumeAfterTransmit()
     /** Retune hardware while keeping the receiver stream open. */
     fun tune(frequencyHz: Double): Double
     fun setSpectrumSpan(spanHz: Double?)
@@ -151,6 +154,9 @@ interface RadioReceiver : AutoCloseable {
 
 interface RadioTransmitter : AutoCloseable {
     val appliedSampleRate: Double
+    fun setGain(name: String, value: Double)
+    /** Update an inactive prepared stream without reopening it. */
+    fun configure(config: TransmitterConfig)
     fun start(
         maximumSeconds: Int,
         onStatistics: (TransmitterStatistics) -> Unit,
@@ -164,6 +170,9 @@ interface RadioBackend {
     fun inspect(endpoint: RadioEndpoint, deviceArguments: Map<String, String>): RadioDeviceCapabilities
     fun openReceiver(config: ReceiverConfig, cancellation: RadioOpenCancellation): RadioReceiver
     fun openTransmitter(config: TransmitterConfig): RadioTransmitter
+    fun setTransmitterGain(
+        endpoint: RadioEndpoint, deviceArguments: Map<String, String>, name: String, value: Double,
+    )
     /** Release a device retained across RX/TX stream handoffs. */
     fun close() {}
     /** Drop a control connection whose stream cleanup could not be confirmed. */

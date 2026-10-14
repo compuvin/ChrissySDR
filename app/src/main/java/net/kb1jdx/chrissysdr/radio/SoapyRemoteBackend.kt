@@ -7,6 +7,7 @@ import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteClient
 import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteDeviceConnection
 import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteRxSession
 import com.kb1jdx.chrissysdr.soapyremote.SoapyRemoteTxSession
+import com.kb1jdx.chrissysdr.soapyremote.SoapyRpcWriter
 import com.kb1jdx.chrissysdr.soapyremote.SoapySensor
 import com.kb1jdx.chrissysdr.soapyremote.SoapySetting
 
@@ -108,6 +109,8 @@ class SoapyRemoteBackend(
             override val appliedSampleRate = session.inputSampleRate
             override val appliedHardwareBandwidth = session.appliedHardwareBandwidthHz
             override fun setAudioVolume(volume: Float) = session.setAudioVolume(volume)
+            override fun suspendForTransmit() = session.suspendForTransmit()
+            override fun resumeAfterTransmit() = session.resumeAfterTransmit()
             override fun tune(frequencyHz: Double) = session.tune(frequencyHz)
             override fun setSpectrumSpan(spanHz: Double?) = session.setSpectrumSpan(spanHz)
             override fun reconfigure(settings: ReceiverDspSettings) = session.reconfigure(settings)
@@ -149,6 +152,9 @@ class SoapyRemoteBackend(
         )
         return object : RadioTransmitter {
             override val appliedSampleRate = session.outputSampleRate
+            override fun setGain(name: String, value: Double) = session.setGain(name, value)
+            override fun configure(config: TransmitterConfig) =
+                session.configure(config.frequencyHz, config.mode, config.txGains)
             override fun start(
                 maximumSeconds: Int,
                 onStatistics: (TransmitterStatistics) -> Unit,
@@ -172,6 +178,20 @@ class SoapyRemoteBackend(
 
             override fun close() = session.close()
         }
+    }
+
+    override fun setTransmitterGain(
+        endpoint: RadioEndpoint, deviceArguments: Map<String, String>, name: String, value: Double,
+    ) {
+        device(endpoint, deviceArguments).transact(
+            SoapyRpcWriter().call(SET_GAIN_ELEMENT).char(TX).int32(0)
+                .string(name).float64(value),
+        ) { it.requireVoid() }
+    }
+
+    private companion object {
+        const val TX = 0
+        const val SET_GAIN_ELEMENT = 704
     }
 }
 

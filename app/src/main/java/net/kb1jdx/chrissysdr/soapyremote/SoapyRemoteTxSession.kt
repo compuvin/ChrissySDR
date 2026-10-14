@@ -28,7 +28,9 @@ class SoapyRemoteTxSession private constructor(
     val outputSampleRate: Double,
     private val streamFormat: String,
     private val fullScale: Double,
-    private val mode: String,
+    initialMode: String,
+    initialFrequencyHz: Double,
+    initialGains: Map<String, Double>,
 ) : AutoCloseable {
     private val sampleCodec = IqSampleCodec(streamFormat, fullScale)
     private val running = AtomicBoolean(false)
@@ -37,6 +39,35 @@ class SoapyRemoteTxSession private constructor(
     @Volatile private var closeFailure: Throwable? = null
     private var writerThread: Thread? = null
     @Volatile private var microphoneInput: AndroidMicrophoneInput? = null
+    @Volatile private var mode = initialMode
+    private var frequencyHz = initialFrequencyHz
+    private var gains = initialGains
+
+    fun setGain(name: String, value: Double) {
+        check(!closed.get() && !running.get()) { "Cannot change gain while TX is active" }
+        require(value.isFinite())
+        transact(SoapyRpcWriter().call(SET_GAIN_ELEMENT).char(TX).int32(0)
+            .string(name).float64(value)) { it.requireVoid() }
+        gains = gains + (name to value)
+    }
+
+    fun configure(newFrequencyHz: Double, newMode: String, newGains: Map<String, Double>) {
+        check(!closed.get() && !running.get()) { "Cannot reconfigure an active TX stream" }
+        require(newFrequencyHz.isFinite() && newFrequencyHz > 0.0)
+        require(newMode in setOf("AM", "NFM", "USB", "LSB"))
+        if (newFrequencyHz != frequencyHz) {
+            transact(SoapyRpcWriter().call(SET_FREQUENCY).char(TX).int32(0)
+                .float64(newFrequencyHz).kwargs(emptyMap())) { it.requireVoid() }
+            frequencyHz = newFrequencyHz
+        }
+        newGains.forEach { (name, gain) ->
+            if (gains[name] != gain) {
+                setGain(name, gain)
+            }
+        }
+        gains = newGains
+        mode = newMode
+    }
 
     fun start(
         maximumSeconds: Int,
@@ -349,7 +380,8 @@ class SoapyRemoteTxSession private constructor(
                     setupReply.requireFinished()
                 }
                 return SoapyRemoteTxSession(
-                    device, stream!!, status!!, streamId!!, appliedSampleRate, format, fullScale, mode,
+                    device, stream!!, status!!, streamId!!, appliedSampleRate, format, fullScale,
+                    mode, frequencyHz, txGains,
                 )
             } catch (error: Throwable) {
                 runCatching { stream?.close() }

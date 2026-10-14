@@ -53,6 +53,9 @@ class RadioService : Service() {
     private val lock = Any()
     @Volatile private var receiver: RadioReceiver? = null
     private var transmitter: RadioTransmitter? = null
+    private var preparedTransmitter: RadioTransmitter? = null
+    private var preparedTransmitterConfig: TransmitterConfig? = null
+    private var receiverSuspendedForTransmit = false
     private var receiverConfig: ReceiverConfig? = null
     private var transmitterConfig: TransmitterConfig? = null
     @Volatile private var txCleanupInProgress: Boolean = false
@@ -277,6 +280,10 @@ class RadioService : Service() {
 
     fun receiverConfiguration(): ReceiverConfig? = synchronized(lock) { receiverConfig }
 
+    fun isReceiverActive(): Boolean = synchronized(lock) {
+        receiver != null && !receiverSuspendedForTransmit
+    }
+
     fun reconfigureReceiver(settings: ReceiverDspSettings): Double? {
         val appliedBandwidth = synchronized(lock) {
             val session = checkNotNull(receiver) { "RX is not running" }
@@ -301,6 +308,7 @@ class RadioService : Service() {
         val session = synchronized(lock) {
             val current = receiver
             receiver = null
+            receiverSuspendedForTransmit = false
             receiverConfig = null
             lastReceiverStatistics = null
             lastSpectrum = null
@@ -313,6 +321,60 @@ class RadioService : Service() {
         updateForegroundState()
     }
 
+    /** All Soapy control and stream setup happens before the operator keys TX. */
+    fun prepareTransmitter(config: TransmitterConfig) = synchronized(lock) {
+        check(transmitter == null && !txCleanupInProgress && !receiverSuspendedForTransmit) {
+            "TX is active or its shutdown is unconfirmed"
+        }
+        val previous = preparedTransmitterConfig
+        val reusable = preparedTransmitter != null && previous != null &&
+            previous.endpoint == config.endpoint &&
+            previous.deviceArguments == config.deviceArguments &&
+            previous.sampleRate == config.sampleRate &&
+            previous.format == config.format && previous.fullScale == config.fullScale
+        if (!reusable) {
+            preparedTransmitter?.close()
+            preparedTransmitter = null
+            preparedTransmitterConfig = null
+            preparedTransmitter = backend.openTransmitter(config)
+        } else {
+            preparedTransmitter!!.configure(config)
+        }
+        preparedTransmitterConfig = config
+    }
+
+    fun discardPreparedTransmitter() = synchronized(lock) {
+        val current = preparedTransmitter
+        preparedTransmitter = null
+        preparedTransmitterConfig = null
+        current?.close()
+    }
+
+    fun setTransmitterGain(
+        endpoint: RadioEndpoint, deviceArguments: Map<String, String>, name: String, value: Double,
+    ) =
+        synchronized(lock) {
+            check(transmitter == null && !receiverSuspendedForTransmit) {
+                "Cannot change TX gain while transmitting"
+            }
+            val prepared = preparedTransmitter
+            val previous = preparedTransmitterConfig
+            if (prepared != null && previous != null &&
+                previous.endpoint == endpoint &&
+                previous.deviceArguments == deviceArguments
+            ) {
+                prepared.setGain(name, value)
+                preparedTransmitterConfig = previous.copy(
+                    txGains = previous.txGains + (name to value),
+                )
+            } else {
+                if (prepared != null) discardPreparedTransmitter()
+                backend.setTransmitterGain(
+                    endpoint, deviceArguments, name, value,
+                )
+            }
+        }
+
     fun startTransmitter(
         config: TransmitterConfig,
         onStatistics: (TransmitterStatistics) -> Unit,
@@ -322,22 +384,14 @@ class RadioService : Service() {
         check(!txCleanupInProgress) {
             "TX blocked: prior TX cleanup is in progress"
         }
-        runCatching { receiver?.close() }
-        receiver = null
-        receiverConfig = null
-        lastReceiverStatistics = null
-        lastSpectrum = null
-        abandonRxAudioFocusIfIdle()
-        runCatching { transmitter?.close() }
-        transmitter = null
-        transmitterConfig = null
-        val session = try {
-            backend.openTransmitter(config)
-        } catch (error: Throwable) {
-            notifyState()
-            updateForegroundState()
-            throw error
-        }
+        check(transmitter == null) { "TX is already active" }
+        val session = checkNotNull(preparedTransmitter?.takeIf {
+            preparedTransmitterConfig?.copy(timeoutSeconds = config.timeoutSeconds) == config
+        }) { "TX is not prepared for the current settings" }
+        receiver?.suspendForTransmit()
+        receiverSuspendedForTransmit = receiver != null
+        preparedTransmitter = null
+        preparedTransmitterConfig = null
         transmitter = session
         try {
             session.start(
@@ -354,7 +408,7 @@ class RadioService : Service() {
                         } else false
                     }
                     if (current) {
-                        closeTransmitterBounded(session)
+                        if (closeTransmitterBounded(session)) resumeReceiverAfterTransmit()
                         notifyState()
                         updateForegroundState()
                         onError(error)
@@ -372,7 +426,7 @@ class RadioService : Service() {
                 transmitter = null
                 transmitterConfig = null
             }
-            closeTransmitterBounded(session)
+            if (closeTransmitterBounded(session)) resumeReceiverAfterTransmit()
             notifyState()
             updateForegroundState()
             throw error
@@ -387,11 +441,29 @@ class RadioService : Service() {
             if (current != null) txCleanupInProgress = true
             current
         }
-        val confirmed = if (session == null) !txCleanupInProgress
+        val confirmed = if (session == null) !txCleanupInProgress &&
+            !receiverSuspendedForTransmit
             else closeTransmitterBounded(session)
+        if (confirmed) resumeReceiverAfterTransmit()
         notifyState()
         updateForegroundState()
         return confirmed
+    }
+
+    private fun resumeReceiverAfterTransmit() {
+        synchronized(lock) {
+            if (!receiverSuspendedForTransmit) return
+            try {
+                receiver?.resumeAfterTransmit()
+            } catch (error: Throwable) {
+                runCatching { receiver?.close() }
+                receiver = null
+                receiverConfig = null
+                receiverSuspendedForTransmit = false
+                throw error
+            }
+            receiverSuspendedForTransmit = false
+        }
     }
 
     private fun closeTransmitterBounded(session: RadioTransmitter): Boolean {
@@ -423,16 +495,20 @@ class RadioService : Service() {
     fun closeAll() {
         cancelPendingReceiver()
         val sessions = synchronized(lock) {
-            val current = receiver to transmitter
+            val current = Triple(receiver, transmitter, preparedTransmitter)
             receiver = null
             transmitter = null
+            preparedTransmitter = null
+            preparedTransmitterConfig = null
+            receiverSuspendedForTransmit = false
             receiverConfig = null
             transmitterConfig = null
             if (current.second != null) txCleanupInProgress = true
             current
         }
-        runCatching { sessions.first?.close() }
         sessions.second?.let(::closeTransmitterBounded)
+        runCatching { sessions.third?.close() }
+        runCatching { sessions.first?.close() }
         runCatching { backend.close() }
         abandonRxAudioFocusIfIdle()
         notifyState()
@@ -569,12 +645,17 @@ class RadioService : Service() {
     }
 
     private fun notifyState() {
-        val state = synchronized(lock) { (receiver != null) to (transmitter != null) }
+        val state = synchronized(lock) {
+            (receiver != null && !receiverSuspendedForTransmit) to (transmitter != null)
+        }
         stateListener?.invoke(state.first, state.second)
     }
 
     private fun notification(): Notification {
-        val (rx, tx, paused) = synchronized(lock) { Triple(receiverConfig, transmitterConfig, rxUserPaused) }
+        val (rx, tx, paused) = synchronized(lock) {
+            Triple(if (receiverSuspendedForTransmit) null else receiverConfig,
+                transmitterConfig, rxUserPaused)
+        }
         val builder = Notification.Builder(this, NOTIFICATION_CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle(rx?.let { formatFrequency(it.frequencyHz) }

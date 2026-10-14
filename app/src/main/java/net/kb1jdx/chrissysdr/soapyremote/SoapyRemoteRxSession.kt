@@ -51,6 +51,8 @@ class SoapyRemoteRxSession private constructor(
     private val sampleCodec = IqSampleCodec(streamFormat, fullScale)
     private val running = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
+    private val suspendedForTransmit = AtomicBoolean(false)
+    @Volatile private var resumedAtNs = System.nanoTime()
     private var readerThread: Thread? = null
     @Volatile private var audioOutput: AndroidAudioOutput? = null
     @Volatile private var audioVolume = 1f
@@ -112,6 +114,34 @@ class SoapyRemoteRxSession private constructor(
 
     fun setAudioVolume(volume: Float) {
         audioVolume = volume.coerceIn(0f, 1f)
+        audioOutput?.setVolume(if (suspendedForTransmit.get()) 0f else audioVolume)
+    }
+
+    fun suspendForTransmit() {
+        check(!closed.get() && running.get()) { "RX stream is not active" }
+        if (!suspendedForTransmit.compareAndSet(false, true)) return
+        try {
+            audioOutput?.setVolume(0f)
+            val result = transact(
+                SoapyRpcWriter().call(DEACTIVATE_STREAM).int32(streamId).int32(0).int64(0),
+            ) { it.int32() }
+            check(result == 0) { "SoapyRemote deactivateStream returned $result" }
+        } catch (error: Throwable) {
+            suspendedForTransmit.set(false)
+            audioOutput?.setVolume(audioVolume)
+            throw error
+        }
+    }
+
+    fun resumeAfterTransmit() {
+        if (!suspendedForTransmit.get()) return
+        check(!closed.get()) { "RX stream is closed" }
+        val result = transact(
+            SoapyRpcWriter().call(ACTIVATE_STREAM).int32(streamId).int32(0).int64(0).int32(0),
+        ) { it.int32() }
+        check(result == 0) { "SoapyRemote activateStream returned $result" }
+        resumedAtNs = System.nanoTime()
+        suspendedForTransmit.set(false)
         audioOutput?.setVolume(audioVolume)
     }
 
@@ -210,6 +240,13 @@ class SoapyRemoteRxSession private constructor(
                     val payload = ByteArray(payloadBytes)
                     input.readFully(payload)
                     lastPacketAt = System.nanoTime()
+                    if (suspendedForTransmit.get()) {
+                        if (nextSequence - acknowledgedSequence >= ACK_INTERVAL_PACKETS) {
+                            sendAck(output, nextSequence, FLOW_WINDOW_PACKETS)
+                            acknowledgedSequence = nextSequence
+                        }
+                        continue
+                    }
                     val iq = FloatArray(elements * 2)
                     sampleCodec.decode(payload, elements, iq)
                     repeat(elements) { index ->
@@ -280,10 +317,11 @@ class SoapyRemoteRxSession private constructor(
                         intervalStart = now
                     }
                 } catch (_: SocketTimeoutException) {
-                    if (System.nanoTime() - lastPacketAt > STREAM_STALL_NS) {
+                    if (!suspendedForTransmit.get() &&
+                        System.nanoTime() - maxOf(lastPacketAt, resumedAtNs) > STREAM_STALL_NS) {
                         throw SoapyStreamException("No RX samples received for 10 seconds")
                     }
-                    drainStatusErrors()
+                    if (!suspendedForTransmit.get()) drainStatusErrors()
                 }
                 }
             } finally {
@@ -304,7 +342,7 @@ class SoapyRemoteRxSession private constructor(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         var cleanupConfirmed = true
-        if (running.getAndSet(false)) {
+        if (running.getAndSet(false) && !suspendedForTransmit.get()) {
             runCatching {
                 val result = transact(
                     SoapyRpcWriter().call(DEACTIVATE_STREAM).int32(streamId).int32(0).int64(0),

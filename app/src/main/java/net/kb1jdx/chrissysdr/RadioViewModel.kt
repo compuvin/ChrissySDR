@@ -98,6 +98,7 @@ data class RadioUiState(
     val rxAntennas: List<String> = emptyList(),
     val rxAntenna: String? = null,
     val txAvailable: Boolean = false,
+    val txPrepared: Boolean = false,
     val txFrequencyRanges: List<RadioRange> = emptyList(),
     val txGainRanges: Map<String, RadioRange> = emptyMap(),
     val txGainValues: Map<String, Double> = emptyMap(),
@@ -134,6 +135,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     private var selectedRxCapabilities: RadioChannelCapabilities? = null
     private var rxGainOverrides: Map<String, Double> = emptyMap()
     private var txGainOverrides: Map<String, Double> = emptyMap()
+    private val txPreparationGeneration = AtomicLong(0)
     private var rxHardwareAgcOverride: Boolean? = null
     private var rxAntennaOverride: String? = null
     private var selectedTxFormat: StreamFormatChoice? = null
@@ -147,6 +149,54 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         "NFM" -> 16_000.0
         "USB", "LSB" -> 6_000.0
         else -> Double.POSITIVE_INFINITY
+    }
+
+    private fun transmitterConfig(snapshot: RadioUiState): TransmitterConfig? {
+        if (TxControlPolicy.unavailableReason(snapshot.mode, snapshot.txAvailable,
+                snapshot.txStatus, snapshot.frequency, snapshot.txFrequencyRanges) != null) return null
+        val device = selectedDevice ?: return null
+        val frequency = snapshot.frequency.toDoubleOrNull() ?: return null
+        val format = selectedTxFormat ?: return null
+        val rate = selectedTxSampleRate ?: return null
+        return TransmitterConfig(
+            endpoint = RadioEndpoint(snapshot.host, selectedPort),
+            deviceArguments = device.toMap(),
+            frequencyHz = frequency,
+            sampleRate = rate,
+            format = format.format,
+            fullScale = format.fullScale,
+            txGains = txGainOverrides.toMap(),
+            mode = snapshot.mode,
+            timeoutSeconds = snapshot.txTimeoutSeconds,
+        )
+    }
+
+    private fun scheduleTxPreparation() {
+        val generation = txPreparationGeneration.incrementAndGet()
+        mutableState.update { it.copy(txPrepared = false) }
+        if (mutableState.value.txActive || mutableState.value.txBusy) return
+        worker.execute {
+            if (generation != txPreparationGeneration.get()) return@execute
+            val service = radioService ?: return@execute
+            val config = transmitterConfig(mutableState.value)
+            if (config == null) {
+                runCatching { service.discardPreparedTransmitter() }
+                return@execute
+            }
+            runCatching { service.prepareTransmitter(config) }
+                .onSuccess {
+                    if (generation == txPreparationGeneration.get()) {
+                        mutableState.update { it.copy(txPrepared = true) }
+                    }
+                }
+                .onFailure { error ->
+                    if (generation == txPreparationGeneration.get()) {
+                        mutableState.update {
+                            it.copy(txStatus = "TX preparation failed: ${error.message ?: error.javaClass.simpleName}")
+                        }
+                    }
+                }
+        }
     }
     private var selectedRadioPreferenceKey: String? = null
     @Volatile private var radioService: RadioService? = null
@@ -376,6 +426,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         rxAntenna = rxAntennaOverride ?: it.rxAntenna,
                     )
                 }
+                scheduleTxPreparation()
                 profile.sampleRateOverrideHz?.let { savedRate ->
                     if (savedRate in mutableState.value.sampleRateOptions) selectSampleRate(savedRate)
                 }
@@ -408,37 +459,12 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
 
     fun attachService(service: RadioService) {
         radioService = service
+        scheduleTxPreparation()
         service.activeReceiverSnapshot()?.let { active ->
             if (activeReceiverConfig == null || selectedDevice == null) {
                 restoreActiveReceiver(active)
             }
-            val generation = rxGeneration.get()
-            service.setReceiverCallbacks(
-                onStatistics = { stats ->
-                    if (generation == rxGeneration.get()) {
-                        mutableState.update {
-                            it.copy(
-                                rxStatus = "Playing ${it.mode} • %.1f ksps • RMS %.1f dBFS • gaps %d"
-                                    .format(stats.samplesPerSecond / 1_000, stats.rmsDbfs,
-                                        stats.sequenceGaps),
-                                rxStreamRateHz = stats.samplesPerSecond,
-                                rxSequenceGaps = stats.sequenceGaps,
-                            )
-                        }
-                    }
-                },
-                onSpectrum = { frame ->
-                    if (generation == rxGeneration.get()) {
-                        updateSpectrum(frame)
-                    }
-                },
-                onError = { error ->
-                    if (generation == rxGeneration.get()) {
-                        handleRxFailure(activeReceiverConfig ?: active.config, generation, 0,
-                            error, true)
-                    }
-                },
-            )
+            bindReceiverCallbacks(service, active.config)
         }
         service.setExternalStopListener { reason ->
             rxGeneration.incrementAndGet()
@@ -470,6 +496,36 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
+    }
+
+    private fun bindReceiverCallbacks(service: RadioService, config: ReceiverConfig) {
+        val generation = rxGeneration.get()
+        service.setReceiverCallbacks(
+                onStatistics = { stats ->
+                    if (generation == rxGeneration.get()) {
+                        mutableState.update {
+                            it.copy(
+                                rxStatus = "Playing ${it.mode} • %.1f ksps • RMS %.1f dBFS • gaps %d"
+                                    .format(stats.samplesPerSecond / 1_000, stats.rmsDbfs,
+                                        stats.sequenceGaps),
+                                rxStreamRateHz = stats.samplesPerSecond,
+                                rxSequenceGaps = stats.sequenceGaps,
+                            )
+                        }
+                    }
+                },
+                onSpectrum = { frame ->
+                    if (generation == rxGeneration.get()) {
+                        updateSpectrum(frame)
+                    }
+                },
+                onError = { error ->
+                    if (generation == rxGeneration.get()) {
+                        handleRxFailure(activeReceiverConfig ?: config, generation, 0,
+                            error, true)
+                    }
+                },
+        )
     }
 
     private fun restoreActiveReceiver(active: RadioService.ActiveReceiverSnapshot) {
@@ -606,8 +662,20 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             (range.minimum + round((value - range.minimum) / range.step) * range.step)
                 .coerceIn(range.minimum, range.maximum)
         } else value
+        if (txGainOverrides[name] == applied) return
         txGainOverrides = txGainOverrides + (name to applied)
         mutableState.update { it.copy(txGainValues = it.txGainValues + (name to applied)) }
+        val endpoint = RadioEndpoint(snapshot.host, selectedPort)
+        val device = selectedDevice?.toMap() ?: return
+        worker.execute {
+            runCatching { radioService?.setTransmitterGain(endpoint, device, name, applied) }
+                .onFailure { error ->
+                    mutableState.update {
+                        it.copy(txStatus = "Could not set TX gain: ${error.message ?: error.javaClass.simpleName}")
+                    }
+                }
+        }
+        scheduleTxPreparation()
     }
     fun setRxHardwareAgc(enabled: Boolean) {
         val snapshot = mutableState.value
@@ -667,6 +735,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         }
         pendingRxRetune?.cancel(false)
         val snapshot = mutableState.value
+        scheduleTxPreparation()
         if (!snapshot.rxActive || !snapshot.rxAvailable) return
         scheduleFrequencyTune()
     }
@@ -696,6 +765,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         setBandwidth(defaultBandwidth.toString())
+        scheduleTxPreparation()
     }
 
     fun setNfmAudioCutoff(value: Double) {
@@ -1150,6 +1220,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 allowUnknownTxRange = allowUnknownTxRange,
             )
         }
+        scheduleTxPreparation()
     }
 
     fun setAllowUnknownTxRange(enabled: Boolean) {
@@ -1169,6 +1240,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 },
             )
         }
+        scheduleTxPreparation()
     }
 
     private fun updateAutomaticSampleRate() {
@@ -1468,10 +1540,11 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             return "TX blocked: prior TX cleanup is in progress"
         }
         val snapshot = mutableState.value
-        return TxControlPolicy.unavailableReason(
+        val reason = TxControlPolicy.unavailableReason(
             snapshot.mode, snapshot.txAvailable, snapshot.txStatus,
             snapshot.frequency, snapshot.txFrequencyRanges,
         )
+        return reason ?: if (!snapshot.txPrepared) "TX is preparing for the current settings" else null
     }
 
     fun reportTxAttemptError(message: String) {
@@ -1491,15 +1564,13 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val snapshot = mutableState.value
-        val device = selectedDevice ?: return
-        val frequency = snapshot.frequency.toDouble()
-        val format = selectedTxFormat ?: return
-        val sampleRate = selectedTxSampleRate ?: return
+        val config = transmitterConfig(snapshot) ?: return
         rxGeneration.incrementAndGet() // A failed or stopped TX must never revive an old RX retry.
+        txPreparationGeneration.incrementAndGet()
         radioService?.cancelPendingReceiver()
         resumeRxAfterTx = snapshot.rxActive
         mutableState.update {
-            it.copy(txBusy = true, txAttemptError = null, txMicrophonePeak = 0.0,
+            it.copy(txBusy = true, txPrepared = false, txAttemptError = null, txMicrophonePeak = 0.0,
                 txStatus = "Stopping RX and opening ${snapshot.mode} TX…")
         }
         worker.execute {
@@ -1512,17 +1583,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             }
             runCatching {
                 service.startTransmitter(
-                    TransmitterConfig(
-                        endpoint = RadioEndpoint(snapshot.host, selectedPort),
-                        deviceArguments = device,
-                        frequencyHz = frequency,
-                        sampleRate = sampleRate,
-                        format = format.format,
-                        fullScale = format.fullScale,
-                        txGains = txGainOverrides,
-                        mode = snapshot.mode,
-                        timeoutSeconds = snapshot.txTimeoutSeconds,
-                    ),
+                    config,
                     onStatistics = { stats ->
                         mutableState.update {
                             it.copy(
@@ -1574,7 +1635,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         txStatus = failure.displayMessage,
                     )
                 }
-                if (resumeReceiver) startReceiver()
+                if (resumeReceiver) restoreReceiverAfterTransmit()
+                scheduleTxPreparation()
             }
         }
     }
@@ -1591,7 +1653,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(txActive = false, txBusy = false, txMicrophonePeak = 0.0,
                         txStatus = message)
                 }
-                if (resumeReceiver) startReceiver()
+                if (resumeReceiver) restoreReceiverAfterTransmit()
+                scheduleTxPreparation()
             } else {
                 val warning = "TX shutdown could not be confirmed. Check radio and server state."
                 mutableState.update {
@@ -1601,9 +1664,19 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         txAttemptError = warning, rxStatus = warning,
                         recentErrors = (it.recentErrors + warning).takeLast(5))
                 }
-                if (resumeReceiver) startReceiver()
+                // Do not resume RX when TX shutdown is unconfirmed.
             }
         }
+    }
+
+    private fun restoreReceiverAfterTransmit() {
+        if (radioService?.isReceiverActive() == true) {
+            radioService?.let { service ->
+                service.receiverConfiguration()?.let { bindReceiverCallbacks(service, it) }
+            }
+            mutableState.update { it.copy(rxActive = true, rxBusy = false,
+                rxStatus = "${it.mode} audio active") }
+        } else if (radioService?.receiverConfiguration() == null) startReceiver()
     }
 
     fun setPermissionMessage(message: String) {

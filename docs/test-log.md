@@ -12,6 +12,20 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-13 — Prepared TX and retained RX stream experiment
+
+- **App version:** `0.7.0-beta.2-dev.6` local debug APK, version code 65.
+- **Scope:** Configure and open an inactive SoapyRemote TX stream before key-up.
+  At key-up, deactivate (but retain) the RX stream and activate the prepared TX
+  stream. After confirmed TX close, reactivate the retained RX stream. TX gain
+  sends one SoapyRemote control update when its slider is released, without
+  waiting for TX key-up or a TX stream to be created.
+- **Automated result:** Unit tests and debug APK assembly pass.
+- **Device result:** Operator confirmed that changing the TX gain slider updates
+  gain on the radio side before transmitting. Key-up delay, RX return, repeated
+  key/unkey cycles, and no accidental RF activation during preparation remain
+  untested.
+
 ## 2026-10-09 — Capability-aware TX gain control
 
 - **UI refinement:** `0.7.0-beta.2-dev.5` (version code 64) uses compact,
