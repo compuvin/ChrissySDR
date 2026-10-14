@@ -1,6 +1,7 @@
 package com.kb1jdx.chrissysdr.soapyremote
 
 import com.kb1jdx.chrissysdr.audio.AndroidMicrophoneInput
+import com.kb1jdx.chrissysdr.audio.MicrophoneInput
 import com.kb1jdx.chrissysdr.dsp.VoiceTransmitPipeline
 import com.kb1jdx.chrissysdr.radio.SoapyStreamException
 import java.io.DataInputStream
@@ -31,6 +32,7 @@ class SoapyRemoteTxSession private constructor(
     initialMode: String,
     initialFrequencyHz: Double,
     initialGains: Map<String, Double>,
+    private val microphoneFactory: () -> MicrophoneInput,
 ) : AutoCloseable {
     private val sampleCodec = IqSampleCodec(streamFormat, fullScale)
     private val running = AtomicBoolean(false)
@@ -38,7 +40,7 @@ class SoapyRemoteTxSession private constructor(
     private val closeComplete = CountDownLatch(1)
     @Volatile private var closeFailure: Throwable? = null
     private var writerThread: Thread? = null
-    @Volatile private var microphoneInput: AndroidMicrophoneInput? = null
+    @Volatile private var microphoneInput: MicrophoneInput? = null
     @Volatile private var mode = initialMode
     private var frequencyHz = initialFrequencyHz
     private var gains = initialGains
@@ -74,19 +76,26 @@ class SoapyRemoteTxSession private constructor(
         onStatistics: (TxStatistics) -> Unit,
         onStopped: () -> Unit,
         onError: (Throwable) -> Unit,
+        onStartupEvent: (String, Long) -> Unit,
     ) {
         require(maximumSeconds in 30..600) { "Invalid TX time limit" }
         check(!closed.get()) { "TX stream is closed" }
         check(running.compareAndSet(false, true)) { "TX stream is already running" }
         try {
-            microphoneInput = AndroidMicrophoneInput(MICROPHONE_SAMPLE_RATE)
+            onStartupEvent("microphone creation begin", System.nanoTime())
+            microphoneInput = microphoneFactory()
+            onStartupEvent("microphone creation complete", System.nanoTime())
+            onStartupEvent("TX activation begin", System.nanoTime())
             val activation = transact(
                 SoapyRpcWriter().call(ACTIVATE_STREAM).int32(streamId).int32(0).int64(0).int32(0),
             ) { it.int32() }
             check(activation == 0) { "SoapyRemote activateStream returned $activation" }
+            onStartupEvent("TX activation complete", System.nanoTime())
+            onStartupEvent("microphone start begin", System.nanoTime())
             microphoneInput!!.start()
+            onStartupEvent("microphone start complete", System.nanoTime())
             writerThread = Thread(
-                { transmitLoop(maximumSeconds, onStatistics, onStopped, onError) },
+                { transmitLoop(maximumSeconds, onStatistics, onStopped, onError, onStartupEvent) },
                 "SoapyRemote-TX",
             ).apply { start() }
         } catch (error: Throwable) {
@@ -100,6 +109,7 @@ class SoapyRemoteTxSession private constructor(
         onStatistics: (TxStatistics) -> Unit,
         onStopped: () -> Unit,
         onError: (Throwable) -> Unit,
+        onStartupEvent: (String, Long) -> Unit,
     ) {
         val bytesPerElement = sampleCodec.bytesPerElement
         val maximumElements = (STREAM_TRANSFER_BYTES - STREAM_HEADER_BYTES) / bytesPerElement
@@ -113,6 +123,7 @@ class SoapyRemoteTxSession private constructor(
         val startedAt = System.nanoTime()
         var intervalStart = startedAt
         var timedOut = false
+        var firstPacketSent = false
 
         try {
             val input = DataInputStream(stream.getInputStream())
@@ -120,6 +131,7 @@ class SoapyRemoteTxSession private constructor(
             val microphone = microphoneInput ?: return
             val audioPipeline = VoiceTransmitPipeline(mode, MICROPHONE_SAMPLE_RATE, outputSampleRate)
             val initialAck = readHeader(input)
+            onStartupEvent("initial TX flow ACK received", System.nanoTime())
             acknowledgedSequence = initialAck.sequence
             flowWindow = initialAck.elements
             require(flowWindow > 0) { "SoapyRemote returned an invalid TX flow window" }
@@ -168,6 +180,10 @@ class SoapyRemoteTxSession private constructor(
                     packet.putLong(16, 0)
                     output.write(packet.array(), 0, packetBytes)
                     output.flush()
+                    if (!firstPacketSent) {
+                        firstPacketSent = true
+                        onStartupEvent("first TX samples written", System.nanoTime())
+                    }
                     sequence++
                     totalSamples += elements
                     intervalSamples += elements
@@ -318,6 +334,9 @@ class SoapyRemoteTxSession private constructor(
             fullScale: Double,
             mode: String,
             txGains: Map<String, Double>,
+            microphoneFactory: () -> MicrophoneInput = {
+                AndroidMicrophoneInput(MICROPHONE_SAMPLE_RATE)
+            },
         ): SoapyRemoteTxSession {
             require(sampleRate >= 8_000) { "TX sample rate must be at least 8000 Hz" }
             IqSampleCodec(format, fullScale)
@@ -381,7 +400,7 @@ class SoapyRemoteTxSession private constructor(
                 }
                 return SoapyRemoteTxSession(
                     device, stream!!, status!!, streamId!!, appliedSampleRate, format, fullScale,
-                    mode, frequencyHz, txGains,
+                    mode, frequencyHz, txGains, microphoneFactory,
                 )
             } catch (error: Throwable) {
                 runCatching { stream?.close() }

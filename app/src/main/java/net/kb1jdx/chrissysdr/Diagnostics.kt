@@ -37,6 +37,10 @@ internal fun diagnosticsText(state: RadioUiState, version: String): String = bui
     appendLine("RX sequence gaps: ${state.rxSequenceGaps?.toString() ?: "Not measured"}")
     appendLine("Observed RX overflow errors: ${state.observedRxOverflows}")
     appendLine("Observed TX underflow errors: ${state.observedTxUnderflows}")
+    appendLine("Last TX startup (relative to TX tap; sample write does not confirm RF output):")
+    if (state.lastTxStartupEvents.isEmpty()) appendLine("Not measured this app session")
+    else state.lastTxStartupEvents.forEach { appendLine("- $it") }
+    appendLine("Last TX stop: ${state.lastTxStopResult ?: "Not recorded this app session"}")
     appendLine("Other hardware underrun/overrun counters: Not reported by this client")
     appendLine()
     appendLine("Recent errors")

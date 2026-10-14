@@ -12,6 +12,46 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-14 — TX stop and connection-loss observations
+
+- **App version:** `0.7.0-beta.2-dev.9` local debug APK.
+- **Radio:** FLEX-6000 via SoapyRemote, transmitting into a dummy load.
+- **Passed:** The 30-second TX timeout unkeyed the radio at the limit and RX
+  resumed. The in-app TX button promptly unkeyed and restored RX. The
+  notification Stop Audio action promptly unkeyed and stopped RX/audio.
+- **Failure observed:** After Stop Audio, RX could be restarted, but later TX
+  attempts repeatedly showed "TX is preparing for the current settings".
+  Diagnostics recorded that message without a TX preparation failure. Tracked
+  as GitHub issue #6; no recovery fix has been made.
+- **Connection-loss observation:** Disconnecting the FLEX-6000 Ethernet cable
+  caused the radio to stop transmitting after roughly 10 seconds. ChrissySDR
+  displayed that TX shutdown could not be verified and advised checking the
+  radio. The operator reported that SoapyRemote appeared locked up afterward
+  and restarted it. This does not establish immediate unkey on loss of the
+  ChrissySDR-to-SoapyRemote connection. The subsequently supplied dev.9
+  diagnostics recorded "TX shutdown could not be confirmed," repeated RX read
+  timeouts, a device-query read timeout, and "TX preparation failed: Flex
+  command timeout: client gui." The app still displayed CONNECTED, so that
+  label did not by itself establish a healthy radio control path.
+- **Offline follow-up:** A fake-SoapyRemote unit test exercises cleanup of a
+  prepared TX stream after the server connection disappears. It passed and
+  confirmed that ChrissySDR reports TX shutdown as unconfirmed rather than
+  claiming success. A second test drops the fake server after receiving the
+  first packet of an active TX stream from a synthetic microphone; it passed,
+  confirming that the TX error callback fires and the control connection is
+  invalidated. Two further active-TX tests passed: a reported SoapyRemote TX
+  stream error and a synthetic microphone read failure each fired the TX error
+  callback and completed deactivateStream/closeStream cleanup. The full JVM
+  test suite passed after all offline failure tests. None of these tests
+  keys hardware or verifies radio unkey timing.
+- **App-process stop with fake server:** The operator connected the installed
+  app to the radio-free fake SoapyRemote server and force-stopped it during
+  virtual TX. The server observed activation, TX samples, then reset TX and
+  control sockets; it released all virtual streams immediately on detecting
+  those resets. On reopening the app, neither RX nor TX resumed automatically.
+  No real RF was produced. Detailed times and limits are in
+  [TX unkey verification](tx-unkey-verification.md).
+
 ## 2026-10-13 — Prepared TX and retained RX stream experiment
 
 - **App version:** `0.7.0-beta.2-dev.6` local debug APK, version code 65.

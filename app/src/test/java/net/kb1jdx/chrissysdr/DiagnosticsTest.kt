@@ -35,4 +35,11 @@ class DiagnosticsTest {
         assertFalse(IllegalStateException("sample rate -4").isSoapyStreamCode(-4))
         assertFalse(IllegalStateException("stream status -42").isSoapyStreamCode(-4))
     }
+
+    @Test fun txPreparationAttemptAppearsInRecentErrors() {
+        val text = diagnosticsText(RadioUiState(
+            recentErrors = listOf("TX is preparing for the current settings"),
+        ), "test")
+        assertTrue(text.contains("Recent errors\n- TX is preparing for the current settings"))
+    }
 }

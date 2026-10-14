@@ -58,6 +58,8 @@ data class RadioUiState(
     val rxSequenceGaps: Long? = null,
     val observedRxOverflows: Int = 0,
     val observedTxUnderflows: Int = 0,
+    val lastTxStartupEvents: List<String> = emptyList(),
+    val lastTxStopResult: String? = null,
     val recentErrors: List<String> = emptyList(),
     val mode: String = "AM",
     val nfmAudioCutoffHz: Double = 3_000.0,
@@ -191,8 +193,10 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 .onFailure { error ->
                     if (generation == txPreparationGeneration.get()) {
+                        val message = "TX preparation failed: ${error.message ?: error.javaClass.simpleName}"
                         mutableState.update {
-                            it.copy(txStatus = "TX preparation failed: ${error.message ?: error.javaClass.simpleName}")
+                            it.copy(txStatus = message,
+                                recentErrors = (it.recentErrors + message).takeLast(5))
                         }
                     }
                 }
@@ -1549,7 +1553,11 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
 
     fun reportTxAttemptError(message: String) {
         val generation = txErrorGeneration.incrementAndGet()
-        mutableState.update { it.copy(txAttemptError = message) }
+        mutableState.update {
+            it.copy(txAttemptError = message,
+                recentErrors = if (it.recentErrors.lastOrNull() == message) it.recentErrors
+                    else (it.recentErrors + message).takeLast(5))
+        }
         retryScheduler.schedule({
             if (generation == txErrorGeneration.get()) {
                 mutableState.update { it.copy(txAttemptError = null) }
@@ -1565,6 +1573,14 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         }
         val snapshot = mutableState.value
         val config = transmitterConfig(snapshot) ?: return
+        val txTapAtNs = System.nanoTime()
+        mutableState.update { it.copy(lastTxStartupEvents = listOf("TX tap: +0 ms"),
+            lastTxStopResult = null) }
+        val recordStartupEvent: (String, Long) -> Unit = { label, atNs ->
+            val elapsedMs = ((atNs - txTapAtNs) / 1_000_000L).coerceAtLeast(0L)
+            mutableState.update { it.copy(lastTxStartupEvents =
+                (it.lastTxStartupEvents + "$label: +$elapsedMs ms").takeLast(16)) }
+        }
         rxGeneration.incrementAndGet() // A failed or stopped TX must never revive an old RX retry.
         txPreparationGeneration.incrementAndGet()
         radioService?.cancelPendingReceiver()
@@ -1584,6 +1600,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             runCatching {
                 service.startTransmitter(
                     config,
+                    onStartupEvent = recordStartupEvent,
                     onStatistics = { stats ->
                         mutableState.update {
                             it.copy(
@@ -1608,6 +1625,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     },
                 )
             }.onSuccess { appliedSampleRate ->
+                recordStartupEvent("app reports transmitting", System.nanoTime())
                 mutableState.update {
                     it.copy(
                         rxActive = false,
@@ -1620,6 +1638,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }.onFailure { error ->
+                recordStartupEvent("TX start failed: ${error.message ?: error.javaClass.simpleName}", System.nanoTime())
                 val failure = RadioFailure.from("Could not start ${snapshot.mode} TX", error)
                 val resumeReceiver = resumeRxAfterTx
                 resumeRxAfterTx = false
@@ -1651,7 +1670,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             if (stopped) {
                 mutableState.update {
                     it.copy(txActive = false, txBusy = false, txMicrophonePeak = 0.0,
-                        txStatus = message)
+                        txStatus = message,
+                        lastTxStopResult = "$message; TX stream shutdown confirmed")
                 }
                 if (resumeReceiver) restoreReceiverAfterTransmit()
                 scheduleTxPreparation()
@@ -1661,6 +1681,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(txActive = false, txBusy = false,
                         txMicrophonePeak = 0.0,
                         txStatus = warning,
+                        lastTxStopResult = "$message; $warning",
                         txAttemptError = warning, rxStatus = warning,
                         recentErrors = (it.recentErrors + warning).takeLast(5))
                 }

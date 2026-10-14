@@ -162,6 +162,7 @@ interface RadioTransmitter : AutoCloseable {
         onStatistics: (TransmitterStatistics) -> Unit,
         onStopped: () -> Unit,
         onError: (Throwable) -> Unit,
+        onStartupEvent: (String, Long) -> Unit,
     )
 }
 

@@ -160,6 +160,7 @@ class SoapyRemoteBackend(
                 onStatistics: (TransmitterStatistics) -> Unit,
                 onStopped: () -> Unit,
                 onError: (Throwable) -> Unit,
+                onStartupEvent: (String, Long) -> Unit,
             ) = session.start(
                 maximumSeconds = maximumSeconds,
                 onStatistics = { stats ->
@@ -174,6 +175,7 @@ class SoapyRemoteBackend(
                 },
                 onStopped = onStopped,
                 onError = onError,
+                onStartupEvent = onStartupEvent,
             )
 
             override fun close() = session.close()

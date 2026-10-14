@@ -82,14 +82,14 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 
 ### 0.7 — Safe Soapy Voice Transmit
 
-- [ ] Implement SoapyRemote TX streaming for microphone-originated AM, NFM, USB, and LSB.
+- [x] Implement SoapyRemote TX streaming for microphone-originated AM, NFM, USB, and LSB.
 - [ ] Configure TX format, sample rate, frequency, bandwidth, antenna, and gain exclusively from advertised TX capabilities.
 - [x] Validate the requested frequency against the device’s TX ranges before arming.
-- [ ] Use tap-to-latch PTT with:
+- [x] Use tap-to-latch PTT with:
   - [x] A separate explicit TX-armed state.
   - [x] Strong visual and audible transitions into and out of transmit.
   - [x] A default three-minute timeout configurable to 30 seconds, 1, 3, 5, or 10 minutes.
-  - [ ] Immediate unkey on timeout, disconnect, stream failure, service shutdown, audio-recording failure, or application fault.
+  - [x] Immediate unkey on timeout, disconnect, stream failure, service shutdown, audio-recording failure, or application fault. See [TX unkey verification and limits](tx-unkey-verification.md).
   - [x] No automatic return to transmit after reconnect or restart.
 - [x] Request microphone permission when a radio becomes TX-ready, before the first transmit attempt.
 - [x] Disable TX when the radio is receive-only, the device is not the station owner, capabilities are incomplete, or validation fails.

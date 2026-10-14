@@ -5,7 +5,12 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 
-class AndroidMicrophoneInput(val sampleRate: Int = 48_000) : AutoCloseable {
+interface MicrophoneInput : AutoCloseable {
+    fun start()
+    fun read(samples: ShortArray): Int
+}
+
+class AndroidMicrophoneInput(val sampleRate: Int = 48_000) : MicrophoneInput {
     private val recorder: AudioRecord
 
     @SuppressLint("MissingPermission")
@@ -36,14 +41,14 @@ class AndroidMicrophoneInput(val sampleRate: Int = 48_000) : AutoCloseable {
         }
     }
 
-    fun start() {
+    override fun start() {
         recorder.startRecording()
         check(recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
             "Android microphone did not start"
         }
     }
 
-    fun read(samples: ShortArray): Int {
+    override fun read(samples: ShortArray): Int {
         val count = recorder.read(samples, 0, samples.size, AudioRecord.READ_BLOCKING)
         check(count >= 0) { "Android microphone read failed ($count)" }
         return count

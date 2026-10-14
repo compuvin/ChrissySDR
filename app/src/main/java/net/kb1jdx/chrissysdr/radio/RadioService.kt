@@ -380,6 +380,7 @@ class RadioService : Service() {
         onStatistics: (TransmitterStatistics) -> Unit,
         onStopped: () -> Unit,
         onError: (Throwable) -> Unit,
+        onStartupEvent: (String, Long) -> Unit,
     ): Double = synchronized(lock) {
         check(!txCleanupInProgress) {
             "TX blocked: prior TX cleanup is in progress"
@@ -388,7 +389,9 @@ class RadioService : Service() {
         val session = checkNotNull(preparedTransmitter?.takeIf {
             preparedTransmitterConfig?.copy(timeoutSeconds = config.timeoutSeconds) == config
         }) { "TX is not prepared for the current settings" }
+        onStartupEvent("RX deactivation begin", System.nanoTime())
         receiver?.suspendForTransmit()
+        onStartupEvent("RX deactivation complete", System.nanoTime())
         receiverSuspendedForTransmit = receiver != null
         preparedTransmitter = null
         preparedTransmitterConfig = null
@@ -398,6 +401,7 @@ class RadioService : Service() {
                 maximumSeconds = config.timeoutSeconds,
                 onStatistics = onStatistics,
                 onStopped = onStopped,
+                onStartupEvent = onStartupEvent,
                 onError = { error ->
                     val current = synchronized(lock) {
                         if (transmitter === session) {
