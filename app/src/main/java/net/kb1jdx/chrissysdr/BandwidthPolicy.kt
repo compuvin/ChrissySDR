@@ -25,6 +25,16 @@ object BandwidthPolicy {
     fun isReported(discrete: List<Double>, ranges: List<RadioRange>): Boolean =
         discrete.isNotEmpty() || ranges.isNotEmpty()
 
+    /** Leave fixed or unreported TX filters alone; select only an advertised adjustable width. */
+    fun forTransmit(discrete: List<Double>, ranges: List<RadioRange>, emissionWidthHz: Double): Double? {
+        return if (transmitAdjustable(discrete, ranges))
+            choose(discrete, ranges, emissionWidthHz) else null
+    }
+
+    fun transmitAdjustable(discrete: List<Double>, ranges: List<RadioRange>): Boolean =
+        discrete.filter { it.isFinite() && it > 0.0 }.distinct().size > 1 ||
+            ranges.any { it.minimum.isFinite() && it.maximum.isFinite() && it.maximum > it.minimum }
+
     /** Use the widest requested display window the radio can advertise. */
     fun forSpectrum(
         discrete: List<Double>,

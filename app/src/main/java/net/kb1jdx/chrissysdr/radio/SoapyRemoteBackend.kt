@@ -149,12 +149,15 @@ class SoapyRemoteBackend(
             config.fullScale,
             config.mode,
             config.txGains,
+            config.txAntenna,
+            config.txHardwareBandwidthHz,
         )
         return object : RadioTransmitter {
             override val appliedSampleRate = session.outputSampleRate
             override fun setGain(name: String, value: Double) = session.setGain(name, value)
             override fun configure(config: TransmitterConfig) =
-                session.configure(config.frequencyHz, config.mode, config.txGains)
+                session.configure(config.frequencyHz, config.mode, config.txGains,
+                    config.txAntenna, config.txHardwareBandwidthHz)
             override fun start(
                 maximumSeconds: Int,
                 onStatistics: (TransmitterStatistics) -> Unit,

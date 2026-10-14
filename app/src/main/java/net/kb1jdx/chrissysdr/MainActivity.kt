@@ -49,6 +49,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -207,6 +208,8 @@ class MainActivity : ComponentActivity() {
                     onTxGainChanged = radio::setTxGain,
                     onRxHardwareAgcChanged = radio::setRxHardwareAgc,
                     onRxAntennaChanged = radio::setRxAntenna,
+                    onTxAntennaChanged = radio::setTxAntenna,
+                    onSyncTxAntennaToRxChanged = radio::setSyncTxAntennaToRx,
                     onSpectrumTune = radio::tuneSpectrumTo,
                     onAllowUnknownTxRange = radio::setAllowUnknownTxRange,
                     onTxTimeoutChanged = radio::setTxTimeoutSeconds,
@@ -294,6 +297,8 @@ private fun RadioScreen(
     onTxGainChanged: (String, Double) -> Unit,
     onRxHardwareAgcChanged: (Boolean) -> Unit,
     onRxAntennaChanged: (String) -> Unit,
+    onTxAntennaChanged: (String) -> Unit,
+    onSyncTxAntennaToRxChanged: (Boolean) -> Unit,
     onSpectrumTune: (Double) -> Unit,
     onAllowUnknownTxRange: (Boolean) -> Unit,
     onTxTimeoutChanged: (Int) -> Unit,
@@ -401,6 +406,8 @@ private fun RadioScreen(
                     onPortChanged = onPortChanged,
                     onSampleRateChanged = onSampleRateChanged,
                     onRxAntennaChanged = onRxAntennaChanged,
+                    onTxAntennaChanged = onTxAntennaChanged,
+                    onSyncTxAntennaToRxChanged = onSyncTxAntennaToRxChanged,
                     onSpectrumAveragingChanged = onSpectrumAveragingChanged,
                     onSpectrumFloorChanged = onSpectrumFloorChanged,
                     onSpectrumRangeChanged = onSpectrumRangeChanged,
@@ -1227,6 +1234,8 @@ private fun SettingsSheet(
     onPortChanged: (String) -> Unit,
     onSampleRateChanged: (Double?) -> Unit,
     onRxAntennaChanged: (String) -> Unit,
+    onTxAntennaChanged: (String) -> Unit,
+    onSyncTxAntennaToRxChanged: (Boolean) -> Unit,
     onSpectrumAveragingChanged: (Float) -> Unit,
     onSpectrumFloorChanged: (Int) -> Unit,
     onSpectrumRangeChanged: (Int) -> Unit,
@@ -1307,27 +1316,62 @@ private fun SettingsSheet(
             onSelected = onSampleRateChanged,
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
-        if (state.rxAntennas.size > 1) {
-            var antennaExpanded by remember { mutableStateOf(false) }
-            Text("RX antenna", fontSize = 18.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 14.dp))
-            Box {
-                OutlinedButton(
-                    onClick = { antennaExpanded = true },
-                    enabled = !state.rxBusy && !state.txActive && !state.txBusy,
-                ) { Text(state.rxAntenna ?: "Choose antenna") }
-                DropdownMenu(antennaExpanded, onDismissRequest = { antennaExpanded = false }) {
-                    state.rxAntennas.forEach { antenna ->
-                        DropdownMenuItem(
-                            text = { Text(antenna) },
-                            onClick = { onRxAntennaChanged(antenna); antennaExpanded = false },
-                        )
+        if (state.rxAntennas.size > 1 || state.txAntennas.isNotEmpty()) {
+            HorizontalDivider(Modifier.padding(top = 16.dp, bottom = 12.dp))
+            Text("Antennas", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            if (state.rxAntennas.size > 1) {
+                var rxAntennaExpanded by remember { mutableStateOf(false) }
+                Text("RX antenna", modifier = Modifier.padding(top = 8.dp))
+                Box {
+                    OutlinedButton(
+                        onClick = { rxAntennaExpanded = true },
+                        enabled = !state.rxBusy && !state.txActive && !state.txBusy,
+                    ) { Text(state.rxAntenna ?: "Choose antenna") }
+                    DropdownMenu(rxAntennaExpanded, onDismissRequest = { rxAntennaExpanded = false }) {
+                        state.rxAntennas.forEach { antenna ->
+                            DropdownMenuItem(
+                                text = { Text(antenna) },
+                                onClick = { onRxAntennaChanged(antenna); rxAntennaExpanded = false },
+                            )
+                        }
                     }
                 }
             }
-            if (state.rxBusy || state.txActive || state.txBusy) {
-                Text("Antenna selection is unavailable while RX is switching or TX is active",
-                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (state.txAntennas.isNotEmpty()) {
+                if (state.rxAntennas.isNotEmpty()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = state.syncTxAntennaToRx,
+                            onCheckedChange = onSyncTxAntennaToRxChanged,
+                            enabled = !state.txActive && !state.txBusy,
+                        )
+                        Text("Sync TX antenna to RX")
+                    }
+                }
+                Text("TX antenna", modifier = Modifier.padding(top = 8.dp))
+                if (state.txAntennas.size > 1) {
+                    var txAntennaExpanded by remember { mutableStateOf(false) }
+                    Box {
+                        OutlinedButton(
+                            onClick = { txAntennaExpanded = true },
+                            enabled = !state.syncTxAntennaToRx && !state.txActive && !state.txBusy,
+                        ) { Text(state.txAntenna ?: "Radio default") }
+                        DropdownMenu(txAntennaExpanded, onDismissRequest = { txAntennaExpanded = false }) {
+                            state.txAntennas.forEach { antenna ->
+                                DropdownMenuItem(
+                                    text = { Text(antenna) },
+                                    onClick = { onTxAntennaChanged(antenna); txAntennaExpanded = false },
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Text(state.txAntennas.single())
+                }
+                if (state.syncTxAntennaToRx && state.rxAntenna !in state.txAntennas) {
+                    Text("No matching TX antenna; radio TX selection is unchanged",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
 

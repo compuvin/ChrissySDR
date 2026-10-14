@@ -39,6 +39,24 @@ class BandwidthPolicyTest {
         )
     }
 
+    @Test fun transmitChoosesSmallestAdvertisedAdjustableWidthContainingEmission() {
+        assertEquals(12_000.0, BandwidthPolicy.forTransmit(
+            listOf(20_000.0, 12_000.0, 8_000.0), emptyList(), 10_000.0))
+        assertEquals(16_000.0, BandwidthPolicy.forTransmit(
+            emptyList(), listOf(RadioRange(4_000.0, 20_000.0, 2_000.0)), 15_000.0))
+    }
+
+    @Test fun transmitLeavesFixedOrUnreportedHardwareBandwidthAlone() {
+        assertNull(BandwidthPolicy.forTransmit(listOf(2_400.0), emptyList(), 6_000.0))
+        assertNull(BandwidthPolicy.forTransmit(emptyList(), listOf(RadioRange(48_000.0, 48_000.0, 0.0)), 10_000.0))
+        assertNull(BandwidthPolicy.forTransmit(emptyList(), emptyList(), 10_000.0))
+    }
+
+    @Test fun adjustableTransmitFilterMustHaveAWidthContainingTheSignal() {
+        assertEquals(true, BandwidthPolicy.transmitAdjustable(listOf(2_400.0, 4_000.0), emptyList()))
+        assertNull(BandwidthPolicy.forTransmit(listOf(2_400.0, 4_000.0), emptyList(), 6_000.0))
+    }
+
     @Test fun spectrumRequestUsesAvailableHardwareWidthWithoutExceedingRadioMaximum() {
         assertEquals(500_000.0, BandwidthPolicy.forSpectrum(
             emptyList(), listOf(RadioRange(0.0, 8_000_000.0, 0.0)),

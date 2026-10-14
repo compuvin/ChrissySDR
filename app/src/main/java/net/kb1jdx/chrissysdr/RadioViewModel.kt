@@ -99,6 +99,9 @@ data class RadioUiState(
     val rxHardwareAgc: Boolean? = null,
     val rxAntennas: List<String> = emptyList(),
     val rxAntenna: String? = null,
+    val txAntennas: List<String> = emptyList(),
+    val txAntenna: String? = null,
+    val syncTxAntennaToRx: Boolean = true,
     val txAvailable: Boolean = false,
     val txPrepared: Boolean = false,
     val txFrequencyRanges: List<RadioRange> = emptyList(),
@@ -140,6 +143,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
     private val txPreparationGeneration = AtomicLong(0)
     private var rxHardwareAgcOverride: Boolean? = null
     private var rxAntennaOverride: String? = null
+    private var txAntennaOverride: String? = null
     private var selectedTxFormat: StreamFormatChoice? = null
     private var selectedTxSampleRate: Double? = null
     private var selectedTxCapabilities: RadioChannelCapabilities? = null
@@ -152,6 +156,12 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         "USB", "LSB" -> 6_000.0
         else -> Double.POSITIVE_INFINITY
     }
+
+    private fun txBandwidthAvailable(capabilities: RadioChannelCapabilities?, mode: String): Boolean =
+        capabilities == null ||
+            !BandwidthPolicy.transmitAdjustable(capabilities.bandwidths, capabilities.bandwidthRanges) ||
+            BandwidthPolicy.forTransmit(capabilities.bandwidths, capabilities.bandwidthRanges,
+                txEmissionWidth(mode)) != null
 
     private fun transmitterConfig(snapshot: RadioUiState): TransmitterConfig? {
         if (TxControlPolicy.unavailableReason(snapshot.mode, snapshot.txAvailable,
@@ -168,6 +178,12 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             format = format.format,
             fullScale = format.fullScale,
             txGains = txGainOverrides.toMap(),
+            txAntenna = TxAntennaPolicy.requested(snapshot.txAntennas, snapshot.rxAntenna,
+                snapshot.syncTxAntennaToRx, txAntennaOverride),
+            txHardwareBandwidthHz = availableTxCapabilities?.let {
+                BandwidthPolicy.forTransmit(it.bandwidths, it.bandwidthRanges,
+                    txEmissionWidth(snapshot.mode))
+            },
             mode = snapshot.mode,
             timeoutSeconds = snapshot.txTimeoutSeconds,
         )
@@ -339,6 +355,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             rxHardwareAgc = (rxHardwareAgcOverride ?: snapshot.rxHardwareAgc)
                 .takeIf { snapshot.rxHardwareAgcSupported },
             rxAntenna = rxAntennaOverride ?: snapshot.rxAntenna,
+            txAntenna = txAntennaOverride,
+            syncTxAntennaToRx = snapshot.syncTxAntennaToRx,
             squelchThresholdsDbfs = snapshot.squelchThresholdsDbfs,
             noiseReductionLevels = snapshot.noiseReductionLevels,
         )
@@ -392,6 +410,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                         rxGainRanges = emptyMap(), rxGainValues = emptyMap(),
                         rxHardwareAgcSupported = false, rxHardwareAgc = null,
                         rxAntennas = emptyList(), rxAntenna = null,
+                        txAntennas = emptyList(), txAntenna = null,
+                        syncTxAntennaToRx = true,
                         activeProfileId = null, profileName = profile.name,
                     )
                 }
@@ -402,6 +422,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 txGainOverrides = emptyMap()
                 rxHardwareAgcOverride = null
                 rxAntennaOverride = null
+                txAntennaOverride = null
                 selectedTxCapabilities = null
                 availableTxCapabilities = null
                 txPermittedByServer = false
@@ -422,12 +443,22 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 }.toMap()
                 rxHardwareAgcOverride = savedControls.hardwareAgc
                 rxAntennaOverride = savedControls.antenna
+                txAntennaOverride = profile.txAntenna?.takeIf {
+                    it in info.tx?.antennas.orEmpty()
+                }
                 mutableState.update {
+                    val rxAntenna = rxAntennaOverride ?: it.rxAntenna
+                    val syncToRx = profile.syncTxAntennaToRx &&
+                        it.rxAntennas.isNotEmpty() && it.txAntennas.isNotEmpty()
+                    val requestedTxAntenna = TxAntennaPolicy.requested(
+                        it.txAntennas, rxAntenna, syncToRx, txAntennaOverride)
                     it.copy(
                         rxGainValues = it.rxGainValues + rxGainOverrides,
                         txGainValues = it.txGainValues + txGainOverrides,
                         rxHardwareAgc = rxHardwareAgcOverride ?: it.rxHardwareAgc,
-                        rxAntenna = rxAntennaOverride ?: it.rxAntenna,
+                        rxAntenna = rxAntenna,
+                        txAntenna = requestedTxAntenna ?: info.tx?.currentAntenna,
+                        syncTxAntennaToRx = syncToRx,
                     )
                 }
                 scheduleTxPreparation()
@@ -697,7 +728,33 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         ) return
         rxAntennaOverride = name
         if (snapshot.rxActive) startReceiver()
-        else mutableState.update { it.copy(rxAntenna = name) }
+        mutableState.update {
+            it.copy(rxAntenna = name,
+                txAntenna = if (it.syncTxAntennaToRx && name in it.txAntennas) name
+                    else it.txAntenna)
+        }
+        if (snapshot.syncTxAntennaToRx) scheduleTxPreparation()
+    }
+    fun setSyncTxAntennaToRx(enabled: Boolean) {
+        val snapshot = mutableState.value
+        if (snapshot.txAntennas.isEmpty() || snapshot.txActive || snapshot.txBusy) return
+        if (snapshot.syncTxAntennaToRx == enabled) return
+        mutableState.update {
+            val requested = TxAntennaPolicy.requested(it.txAntennas, it.rxAntenna,
+                enabled, txAntennaOverride)
+            it.copy(syncTxAntennaToRx = enabled,
+                txAntenna = requested ?: it.txAntenna)
+        }
+        scheduleTxPreparation()
+    }
+    fun setTxAntenna(name: String) {
+        val snapshot = mutableState.value
+        if (snapshot.syncTxAntennaToRx || name !in snapshot.txAntennas ||
+            snapshot.txActive || snapshot.txBusy
+        ) return
+        txAntennaOverride = name
+        mutableState.update { it.copy(txAntenna = name) }
+        scheduleTxPreparation()
     }
     fun stepFrequency(direction: Int) {
         val snapshot = mutableState.value
@@ -753,7 +810,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 .automaticRate
         }
         selectedTxCapabilities = availableTxCapabilities?.takeIf {
-            txPermittedByServer && selectedTxFormat != null && selectedTxSampleRate != null
+            txPermittedByServer && selectedTxFormat != null && selectedTxSampleRate != null &&
+                txBandwidthAvailable(it, value)
         }
         mutableState.update {
             it.copy(
@@ -761,7 +819,9 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 txAttemptError = null,
                 txAvailable = selectedTxCapabilities != null &&
                     (!it.txRangesUnreported || it.allowUnknownTxRange),
-                txStatus = if (selectedTxCapabilities == null)
+                txStatus = if (!txBandwidthAvailable(availableTxCapabilities, value))
+                    "TX unavailable: no advertised bandwidth contains the ${value} signal"
+                else if (selectedTxCapabilities == null)
                     "TX unavailable: no usable ${value} TX sample rate or format"
                 else if (it.txRangesUnreported && !it.allowUnknownTxRange)
                     "TX disabled: the radio did not report TX frequency limits"
@@ -1019,6 +1079,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 rxGainRanges = emptyMap(), rxGainValues = emptyMap(),
                 rxHardwareAgcSupported = false, rxHardwareAgc = null,
                 rxAntennas = emptyList(), rxAntenna = null,
+                txAntennas = emptyList(), txAntenna = null,
+                syncTxAntennaToRx = true,
             )
         }
         selectedDevice = null
@@ -1028,6 +1090,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         txGainOverrides = emptyMap()
         rxHardwareAgcOverride = null
         rxAntennaOverride = null
+        txAntennaOverride = null
         selectedTxCapabilities = null
         availableTxCapabilities = null
         txPermittedByServer = false
@@ -1128,6 +1191,7 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         rxGainOverrides = emptyMap()
         rxHardwareAgcOverride = null
         rxAntennaOverride = null
+        txAntennaOverride = null
         selectedRxFormat = rxCapabilities.supportedFormat()
         val snapshot = mutableState.value
         val bandwidth = snapshot.bandwidth.toDoubleOrNull() ?: DEFAULT_AM_BANDWIDTH
@@ -1162,7 +1226,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
         )
         selectedTxCapabilities = if (
             txPermittedByServer && selectedTxFormat != null &&
-            selectedTxSampleRate != null && txCapabilities != null
+            selectedTxSampleRate != null && txCapabilities != null &&
+            txBandwidthAvailable(txCapabilities, mutableState.value.mode)
         ) txCapabilities else null
         val txAvailable = selectedTxCapabilities != null &&
             (!txRangesUnreported || allowUnknownTxRange)
@@ -1173,6 +1238,8 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
             txCapabilities == null -> "TX unavailable: no TX channel"
             selectedTxFormat == null -> "TX unavailable: no supported stream format"
             selectedTxSampleRate == null -> "TX unavailable: no usable TX sample rate"
+            !txBandwidthAvailable(txCapabilities, mutableState.value.mode) ->
+                "TX unavailable: no advertised bandwidth contains the ${mutableState.value.mode} signal"
             txRangesUnreported && !allowUnknownTxRange ->
                 "TX disabled: the radio did not report TX frequency limits"
             else -> "TX ready (${selectedTxFormat!!.format}, ${formatHz(selectedTxSampleRate!!)})"
@@ -1204,6 +1271,12 @@ class RadioViewModel(application: Application) : AndroidViewModel(application) {
                 rxHardwareAgc = rxCapabilities?.currentGainMode,
                 rxAntennas = rxCapabilities?.antennas.orEmpty(),
                 rxAntenna = rxCapabilities?.currentAntenna,
+                txAntennas = txCapabilities?.antennas.orEmpty(),
+                txAntenna = TxAntennaPolicy.requested(
+                    txCapabilities?.antennas.orEmpty(), rxCapabilities?.currentAntenna,
+                    true, null) ?: txCapabilities?.currentAntenna,
+                syncTxAntennaToRx = rxCapabilities?.antennas?.isNotEmpty() == true &&
+                    txCapabilities?.antennas?.isNotEmpty() == true,
                 rxAvailable = selectedRxFormat != null && rxRate != null && bandwidthAvailable &&
                     validRxFrequency(it.frequency) && SampleRatePolicy.isUsable(rxRate, it.mode, bandwidth),
                 rxStatus = if (!validRxFrequency(it.frequency)) {

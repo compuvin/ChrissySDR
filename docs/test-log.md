@@ -12,6 +12,52 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-14 — Automatic TX bandwidth, two-radio test
+
+- **App version:** `0.7.0-beta.2-dev.10` local debug APK.
+- **Scope:** Automatic mode-based TX hardware-bandwidth selection. An adjustable
+  advertised choice is applied during TX preparation; fixed or unreported
+  bandwidth is left unchanged.
+- **FLEX-1500 result:** The operator reported successful transmission in AM,
+  NFM, USB, and LSB.
+- **FLEX-6700 result:** The operator reported that transmit tests passed. Audio
+  sounded a little off; the cause has not been established. Its Soapy TX
+  bandwidth was reported as fixed at 2.4 kHz, so ChrissySDR did not issue a
+  bandwidth-setting call for this radio.
+- **Final result:** The operator confirmed all tests for this TX bandwidth
+  change passed on both radios. The FLEX-6700 audio-quality observation remains
+  separate from this functional result.
+- **Separate power fault:** The operator subsequently confirmed that low input
+  voltage caused the FLEX-6700 to stop transmitting. ChrissySDR reported
+  `TX shutdown could not be confirmed`, which was its response to losing
+  confirmation after the radio stopped. The same diagnostic recorded failed
+  TX preparation commands, a read timeout, and a CONNECTED label; those
+  observations are retained, but are not evidence that ChrissySDR's TX
+  bandwidth selection caused the radio to stop. No fix was attempted as part
+  of this test entry.
+
+## 2026-10-14 — Capability-aware TX antenna selection
+
+- **App version:** `0.7.0-beta.2-dev.10` local debug APK, version code 69.
+- **Change:** Settings groups RX and TX antennas. When both channels advertise
+  antennas, TX-to-RX sync is on by default. A matching RX antenna is applied
+  to TX during stream preparation; otherwise no unsupported TX antenna is sent.
+  Disabling sync permits a separate advertised TX antenna selection. Saved
+  profiles retain the sync choice and manual TX antenna through a Room migration.
+- **Automated result:** Full JVM suite and debug APK build passed. Tests cover
+  matching/mismatched antenna names and the SoapyRemote TX antenna RPC before
+  stream setup and on reconfiguration.
+- **Device result:** Initial FLEX-6000 ANT2 attempt is recorded below; full
+  antenna behavior remains unverified. Confirm sync, independent TX selection,
+  profile reload, and hidden controls when TX antennas are not advertised.
+- **FLEX-6000 follow-up:** The operator selected ANT2 in dev.10. ChrissySDR
+  sent the RX antenna selection, but RX failed with `Flex command failed:
+  display pan s 0x40000002 ant=ANT2 (5000002D)`. The driver advertised ANT2
+  but did not accept that RX selection in this test. RX stayed inactive; this
+  does not verify that the TX antenna was changed. Diagnostics also retained
+  an unrelated connection-refused error from the earlier fake-server endpoint
+  after that test server had been stopped.
+
 ## 2026-10-14 — TX stop and connection-loss observations
 
 - **App version:** `0.7.0-beta.2-dev.9` local debug APK.

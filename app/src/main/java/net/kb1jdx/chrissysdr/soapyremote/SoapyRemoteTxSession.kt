@@ -32,6 +32,8 @@ class SoapyRemoteTxSession private constructor(
     initialMode: String,
     initialFrequencyHz: Double,
     initialGains: Map<String, Double>,
+    initialAntenna: String?,
+    initialHardwareBandwidthHz: Double?,
     private val microphoneFactory: () -> MicrophoneInput,
 ) : AutoCloseable {
     private val sampleCodec = IqSampleCodec(streamFormat, fullScale)
@@ -44,6 +46,8 @@ class SoapyRemoteTxSession private constructor(
     @Volatile private var mode = initialMode
     private var frequencyHz = initialFrequencyHz
     private var gains = initialGains
+    private var antenna = initialAntenna
+    private var hardwareBandwidthHz = initialHardwareBandwidthHz
 
     fun setGain(name: String, value: Double) {
         check(!closed.get() && !running.get()) { "Cannot change gain while TX is active" }
@@ -53,7 +57,8 @@ class SoapyRemoteTxSession private constructor(
         gains = gains + (name to value)
     }
 
-    fun configure(newFrequencyHz: Double, newMode: String, newGains: Map<String, Double>) {
+    fun configure(newFrequencyHz: Double, newMode: String, newGains: Map<String, Double>,
+        newAntenna: String?, newHardwareBandwidthHz: Double?) {
         check(!closed.get() && !running.get()) { "Cannot reconfigure an active TX stream" }
         require(newFrequencyHz.isFinite() && newFrequencyHz > 0.0)
         require(newMode in setOf("AM", "NFM", "USB", "LSB"))
@@ -68,6 +73,16 @@ class SoapyRemoteTxSession private constructor(
             }
         }
         gains = newGains
+        if (newHardwareBandwidthHz != null && newHardwareBandwidthHz != hardwareBandwidthHz) {
+            transact(SoapyRpcWriter().call(SET_BANDWIDTH).char(TX).int32(0)
+                .float64(newHardwareBandwidthHz)) { it.requireVoid() }
+        }
+        hardwareBandwidthHz = newHardwareBandwidthHz
+        if (newAntenna != null && newAntenna != antenna) {
+            transact(SoapyRpcWriter().call(SET_ANTENNA).char(TX).int32(0)
+                .string(newAntenna)) { it.requireVoid() }
+        }
+        antenna = newAntenna
         mode = newMode
     }
 
@@ -307,12 +322,14 @@ class SoapyRemoteTxSession private constructor(
 
     companion object {
         private const val TX = 0
+        private const val SET_BANDWIDTH = 903
         private const val SETUP_STREAM = 300
         private const val CLOSE_STREAM = 301
         private const val ACTIVATE_STREAM = 302
         private const val DEACTIVATE_STREAM = 303
         private const val SET_FREQUENCY = 800
         private const val SET_GAIN_ELEMENT = 704
+        private const val SET_ANTENNA = 501
         private const val SET_SAMPLE_RATE = 900
         private const val GET_SAMPLE_RATE = 901
         private const val STREAM_HEADER_BYTES = 24
@@ -334,6 +351,8 @@ class SoapyRemoteTxSession private constructor(
             fullScale: Double,
             mode: String,
             txGains: Map<String, Double>,
+            txAntenna: String? = null,
+            txHardwareBandwidthHz: Double? = null,
             microphoneFactory: () -> MicrophoneInput = {
                 AndroidMicrophoneInput(MICROPHONE_SAMPLE_RATE)
             },
@@ -349,9 +368,17 @@ class SoapyRemoteTxSession private constructor(
                 transact(
                     SoapyRpcWriter().call(SET_SAMPLE_RATE).char(TX).int32(0).float64(sampleRate),
                 ) { it.requireVoid() }
+                txHardwareBandwidthHz?.let { bandwidth ->
+                    transact(SoapyRpcWriter().call(SET_BANDWIDTH).char(TX).int32(0)
+                        .float64(bandwidth)) { it.requireVoid() }
+                }
                 txGains.forEach { (name, gain) ->
                     transact(SoapyRpcWriter().call(SET_GAIN_ELEMENT).char(TX).int32(0)
                         .string(name).float64(gain)) { it.requireVoid() }
+                }
+                txAntenna?.let { antenna ->
+                    transact(SoapyRpcWriter().call(SET_ANTENNA).char(TX).int32(0)
+                        .string(antenna)) { it.requireVoid() }
                 }
                 transact(
                     SoapyRpcWriter().call(SET_FREQUENCY).char(TX).int32(0)
@@ -400,7 +427,8 @@ class SoapyRemoteTxSession private constructor(
                 }
                 return SoapyRemoteTxSession(
                     device, stream!!, status!!, streamId!!, appliedSampleRate, format, fullScale,
-                    mode, frequencyHz, txGains, microphoneFactory,
+                    mode, frequencyHz, txGains, txAntenna, txHardwareBandwidthHz,
+                    microphoneFactory,
                 )
             } catch (error: Throwable) {
                 runCatching { stream?.close() }

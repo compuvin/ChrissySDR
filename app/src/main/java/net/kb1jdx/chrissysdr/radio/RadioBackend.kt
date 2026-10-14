@@ -108,6 +108,8 @@ data class TransmitterConfig(
     val format: String,
     val fullScale: Double,
     val txGains: Map<String, Double> = emptyMap(),
+    val txAntenna: String? = null,
+    val txHardwareBandwidthHz: Double? = null,
     val mode: String = "AM",
     val timeoutSeconds: Int = 180,
 )

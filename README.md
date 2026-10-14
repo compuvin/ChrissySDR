@@ -57,14 +57,15 @@ The current development build can:
   show the tuned center and the mode's passband. Tap or drag the spectrum to
   tune RX with a selectable frequency step.
 
-Transmit is the central long-term purpose of ChrissySDR. The current transmit
-path is an early controlled test facility, not a production-ready transmitter.
-Additional operating controls, TX safety mechanisms, and on-air validation
-remain under development. Driver settings are currently read-only, and sensor
-values are snapshots taken during device inspection rather than live meters.
+Transmit is the central purpose of ChrissySDR. Version 0.7.0 provides
+microphone-originated AM, NFM, USB, and LSB transmit over SoapyRemote on a LAN,
+with capability-aware configuration and tap-to-latch PTT. Operators remain
+responsible for their station and licensing. Driver settings are currently
+read-only, and sensor values are snapshots taken during device inspection
+rather than live meters.
 
 The [GitHub Releases](https://github.com/compuvin/ChrissySDR/releases) page
-provides test APKs. The `0.7.0-beta.1` APK is debug-signed for testing; it is not a
+provides test APKs. The `0.7.0` APK is debug-signed; it is not a
 production-signed or Play Store build.
 
 ## Screenshots
@@ -87,10 +88,9 @@ The first complete receiver is planned to include:
 - Background reception through an Android foreground media service.
 - A modern portrait-oriented interface built with Jetpack Compose.
 
-The `0.7` beta begins SoapyRemote voice transmit; safety and broader TX
-validation remain on the roadmap. Later work is expected to add memories, a
-waterfall, CW support, additional device validation, and a separate direct
-flex1500d backend.
+Version 0.7.0 completes the safe Soapy voice-transmit milestone. Later work is
+expected to add memories, a waterfall, CW support, additional device
+validation, and a separate direct flex1500d backend.
 
 The detailed milestones and technical plan are in
 [docs/product-roadmap.md](docs/product-roadmap.md).

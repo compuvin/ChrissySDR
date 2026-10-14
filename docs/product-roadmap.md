@@ -83,7 +83,7 @@ ChrissySDR will become a portrait-oriented Android amateur-radio client that:
 ### 0.7 — Safe Soapy Voice Transmit
 
 - [x] Implement SoapyRemote TX streaming for microphone-originated AM, NFM, USB, and LSB.
-- [ ] Configure TX format, sample rate, frequency, bandwidth, antenna, and gain exclusively from advertised TX capabilities.
+- [x] Configure TX format, sample rate, frequency, bandwidth, antenna, and gain exclusively from advertised TX capabilities.
 - [x] Validate the requested frequency against the device’s TX ranges before arming.
 - [x] Use tap-to-latch PTT with:
   - [x] A separate explicit TX-armed state.

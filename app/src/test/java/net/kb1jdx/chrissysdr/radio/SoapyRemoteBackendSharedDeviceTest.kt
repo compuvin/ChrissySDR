@@ -21,9 +21,22 @@ class SoapyRemoteBackendSharedDeviceTest {
                     listener.accept().use { control ->
                         control.soTimeout = 5_000
                         while (true) {
-                            val call = SoapyRpcReader(
+                            val request = SoapyRpcReader(
                                 SoapyRpcFrame.readFrom(control.getInputStream()).payload,
-                            ).call()
+                            )
+                            val call = request.call()
+                            if (call == 501) {
+                                assertEquals(0, request.char()) // TX
+                                assertEquals(0, request.int32())
+                                assertEquals(if (calls.count { it == 501 } == 0) "ANT2" else "ANT1",
+                                    request.string())
+                            }
+                            if (call == 903) {
+                                assertEquals(0, request.char()) // TX
+                                assertEquals(0, request.int32())
+                                assertEquals(if (calls.count { it == 903 } == 0) 12_000.0 else 20_000.0,
+                                    request.float64(), 0.0)
+                            }
                             calls += call
                             if (call == 300) {
                                 ServerSocket(0).use { streamListener ->
@@ -63,10 +76,11 @@ class SoapyRemoteBackendSharedDeviceTest {
                 RadioOpenCancellation(),
             )
             rx.close()
-            val tx = backend.openTransmitter(
-                TransmitterConfig(endpoint, arguments, 14_200_000.0, 48_000.0,
-                    "CS16", 32_768.0, mode = "USB"),
-            )
+            val txConfig = TransmitterConfig(endpoint, arguments, 14_200_000.0, 48_000.0,
+                "CS16", 32_768.0, txAntenna = "ANT2",
+                txHardwareBandwidthHz = 12_000.0, mode = "USB")
+            val tx = backend.openTransmitter(txConfig)
+            tx.configure(txConfig.copy(txAntenna = "ANT1", txHardwareBandwidthHz = 20_000.0))
             tx.close()
             backend.close()
 
@@ -76,6 +90,11 @@ class SoapyRemoteBackendSharedDeviceTest {
             assertEquals(1, calls.count { it == 1 }) // MAKE
             assertEquals(2, calls.count { it == 300 }) // RX and TX setupStream
             assertEquals(2, calls.count { it == 301 }) // RX and TX closeStream
+            assertEquals(2, calls.count { it == 501 }) // TX antenna at setup and reconfigure
+            assertEquals(2, calls.count { it == 903 }) // TX bandwidth at setup and reconfigure
+            assertEquals(true, calls.indexOf(903) < calls.lastIndexOf(300))
+            assertEquals(true, calls.indexOf(501) < calls.lastIndexOf(300))
+            assertEquals(true, calls.lastIndexOf(501) > calls.lastIndexOf(300))
             assertEquals(1, calls.count { it == 2 }) // UNMAKE only at the end
         }
     }
