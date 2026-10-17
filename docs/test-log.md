@@ -12,6 +12,12 @@ individual experiments belong here instead.
 - Result
 - Observations or follow-up work
 
+## 2026-10-17 — First on-air contact with ChrissySDR
+
+- **Result:** The operator reported making the first contact ever using
+  ChrissySDR, with K8PTP in Ohio on the 20-meter band using USB.
+- **Note:** This records a project milestone, not a full QSO log entry.
+
 ## 2026-10-14 — Automatic TX bandwidth, two-radio test
 
 - **App version:** `0.7.0-beta.2-dev.10` local debug APK.

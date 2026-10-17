@@ -23,7 +23,9 @@ license and local regulations.
 
 ## Project status
 
-ChrissySDR is under active development and is not ready for general use.
+ChrissySDR is under active development; use it with care. It has been used for
+an on-air contact: its first reported QSO was with K8PTP in Ohio on 20 meters
+using USB on October 17, 2026.
 
 The current development build can:
 
@@ -49,7 +51,7 @@ The current development build can:
   sideband-selective product detection; tuning is referenced to the suppressed
   carrier. Compatible frequency, mode, and passband changes retain the RX
   stream.
-- Send experimental AM, NFM, USB, and LSB microphone transmissions on radios
+- Send AM, NFM, USB, and LSB microphone transmissions on radios
   that report compatible TX capabilities, using tap-to-latch PTT and a
   configurable timeout.
 - Report basic stream and signal statistics.
