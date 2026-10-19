@@ -154,3 +154,5 @@ before any over-the-air use.
 
 ChrissySDR is free software licensed under the
 [GNU General Public License version 3](LICENSE).
+
+[![CodeFactor](https://www.codefactor.io/repository/github/compuvin/chrissysdr/badge)](https://www.codefactor.io/repository/github/compuvin/chrissysdr)
