@@ -21,6 +21,11 @@ Transmit operation is intended only for appropriately licensed operators using
 frequencies, modes, power levels, and operating practices permitted by their
 license and local regulations.
 
+## [Works with ChrissySDR](docs/works-with-chrissysdr.md)
+
+See radios with SoapySDR drivers, their RX/TX capabilities, and which ones
+have been tested with ChrissySDR.
+
 ## Project status
 
 ChrissySDR is under active development; use it with care. It has been used for
