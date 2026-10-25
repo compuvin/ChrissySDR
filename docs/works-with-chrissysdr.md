@@ -23,6 +23,14 @@ ChrissySDR. Available modes and controls depend on what the driver reports.
 | Red Pitaya | Yes | Yes | [SoapyRedPitaya](https://github.com/pothosware/SoapyRedPitaya) | Not yet |
 | NetSDR-protocol receivers | Yes | No | [SoapyNetSDR](https://github.com/pothosware/SoapyNetSDR) | Not yet |
 | Audio-device-based SDR setups | Depends on setup | Depends on setup | [SoapyAudio](https://github.com/pothosware/SoapyAudio) | Not yet |
+| FUNcube Dongle Pro+ | Yes | No | [SoapyFCDPP](https://github.com/pothosware/SoapyFCDPP) | Not yet |
+| AFEDRI SDR-Net | Yes | No | [SoapyAfedri](https://github.com/openwebrx/SoapyAfedri-debian) | Not yet |
+| RX-888 / RX-888 MkII | Yes | No | [SoapySDDC](https://github.com/renardspark/SDDC_Driver) | Not yet |
+| RigExpert Fobos SDR | Yes | No | [SoapyFobosSDR](https://github.com/rigexpert/SoapyFobosSDR) | Not yet |
+| CaribouLite Raspberry Pi HAT | Yes | Yes | [CaribouLite SoapySDR support](https://github.com/cariboulabs/cariboulite) | Not yet |
+| HydraSDR RFOne | Yes | No | [SoapyHydraSDR](https://github.com/hydrasdr/SoapyHydraSDR) | Not yet |
+| RFNM SDR family | Yes | Unconfirmed | [SoapyRFNM](https://github.com/rfnm/soapy-rfnm) | Not yet |
+| LiteX M2SDR | Yes | Yes | [LiteX M2SDR SoapySDR driver](https://github.com/enjoy-digital/litex_m2sdr) | Not yet |
 
 Have another SoapySDR radio, or results for one listed here? Please
 [open a ChrissySDR issue](https://github.com/compuvin/ChrissySDR/issues/new)
